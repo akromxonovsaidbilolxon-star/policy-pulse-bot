@@ -65,6 +65,8 @@ def extract_truck_data_with_ai(raw_text):
         return {"action_type": "log", "reason": raw_text, "status": "Active"}
 
 if __name__ == "__main__":
+    print("Waiting for old instance to close...")
+    time.sleep(3)
     print("Clearing any lingering webhooks...")
     try:
         bot.remove_webhook()
