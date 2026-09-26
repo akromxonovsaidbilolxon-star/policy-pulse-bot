@@ -3,7 +3,6 @@ import telebot
 import requests
 import json
 import time
-import re
 from datetime import datetime
 from google import genai
 from collections import defaultdict
@@ -45,7 +44,6 @@ def process_accumulated_messages(chat_id):
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Extract data using AI with fallback to regular expression parsing
     structured_data = extract_truck_data_with_ai(combined_text)
     structured_data["timestamp"] = timestamp
     structured_data["notes"] = f"Telegram Bot - {combined_text[:120]}"
@@ -59,33 +57,33 @@ def process_accumulated_messages(chat_id):
 
 def extract_truck_data_with_ai(raw_text):
     if not client:
-        return {"company": "Borderlanders Inc", "driver_name": "", "driver_status": "Active"}
+        return {
+            "company": "Borderlanders Inc",
+            "driver_name": "",
+            "driver_status": "Active",
+            "driver_type": "Company driver"
+        }
     
-    prompt = f"""
-    You are an advanced logistics data extraction engine. Analyze the following Telegram message text carefully.
-    Your job is to extract real driver names, unit numbers, companies, and truck specs. 
-    
-    CRITICAL RULES FOR DRIVER NAMES:
-    - Look for actual human names (e.g., "Jonathan Correa", "Daud Abdirahim Aden", "Mohamed Yusuf Moalim", "Frank Rodriguez").
-    - IGNORE administrative words like "Date", "Inspector", "Driver GTG", "Telegram", or group chat titles.
-    - If no genuine human driver name is present in the text, return an empty string "" for "driver_name". Do NOT guess or pick random words.
-
-    Extract fields into a strict JSON object with these exact keys:
-    - "company": (Extract company name like "Successor Inc", "Cargoprime Corp", "Borderlanders Inc", or "Pars", default to "Borderlanders Inc")
-    - "driver_status": ("Active", "Inactive", or "Terminated")
-    - "driver_type": ("Company driver" or "Owner")
-    - "driver_name": (Real full driver name or team string, or "" if none)
-    - "driver_effective_date": (YYYY-MM-DD if found, else current date)
-    - "unit_number": (Unit number if found, else "")
-    - "make": (Truck make if found, else "")
-    - "year": (Year if found, else "")
-    - "vin": (VIN if found, else "")
-
-    Messages:
-    {raw_text}
-    
-    Return ONLY valid JSON. No markdown backticks, just raw JSON.
-    """
+    prompt = (
+        "You are an advanced logistics data extraction engine. Analyze the following Telegram message text carefully. "
+        "Your job is to extract real driver names, unit numbers, companies, and truck specs.\n\n"
+        "CRITICAL RULES FOR DRIVER NAMES:\n"
+        "- Look for actual human names (e.g., 'Jonathan Correa', 'Daud Abdirahim Aden', 'Mohamed Yusuf Moalim', 'Frank Rodriguez').\n"
+        "- IGNORE administrative words like 'Date', 'Inspector', 'Driver GTG', 'Telegram', or group chat titles.\n"
+        "- If no genuine human driver name is present in the text, return an empty string '' for 'driver_name'. Do NOT guess or pick random words.\n\n"
+        "Extract fields into a strict JSON object with these exact keys:\n"
+        "- 'company': (Extract company name like 'Successor Inc', 'Cargoprime Corp', 'Borderlanders Inc', or 'Pars', default to 'Borderlanders Inc')\n"
+        "- 'driver_status': ('Active', 'Inactive', or 'Terminated')\n"
+        "- 'driver_type': ('Company driver' or 'Owner')\n"
+        "- 'driver_name': (Real full driver name or team string, or '' if none)\n"
+        "- 'driver_effective_date': (YYYY-MM-DD if found, else current date)\n"
+        "- 'unit_number': (Unit number if found, else '')\n"
+        "- 'make': (Truck make if found, else '')\n"
+        "- 'year': (Year if found, else '')\n"
+        "- 'vin': (VIN if found, else '')\n\n"
+        f"Messages:\n{raw_text}\n\n"
+        "Return ONLY valid JSON. No markdown backticks, just raw JSON."
+    )
     try:
         response = client.models.generate_content(
             model='gemini-3.8-flash',
@@ -99,84 +97,6 @@ def extract_truck_data_with_ai(raw_text):
         return {
             "company": "Borderlanders Inc",
             "driver_name": "",
-            "driver_status": "Active",
-            "driver_type": "Company driver"
-        }
-    Messages:
-    {raw_text}
-    
-    Return ONLY valid JSON. No markdown backticks, just raw JSON.
-    """
-    try:
-        response = client.models.generate_content(
-            model='gemini-3.8-flash',
-            contents=prompt,
-        )
-        clean_text = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean_text)
-        
-        if not data.get("driver_name") or data.get("driver_name") == "Unknown Driver":
-            data["driver_name"] = fallback_driver
-        if not data.get("unit_number"):
-            data["unit_number"] = fallback_unit
-            
-        return data
-    except Exception as e:
-        print(f"AI parsing error: {e}")
-        return {
-            "company": "Borderlanders Inc",
-            "driver_name": fallback_driver,
-            "unit_number": fallback_unit,
-            "driver_status": "Active",
-            "driver_type": "Company driver"
-        }
-
-    if not client:
-        return {"driver_name": fallback_driver, "unit_number": fallback_unit, "company": "Borderlanders Inc", "driver_status": "Active"}
-    
-    prompt = f"""
-    Analyze these logistics dispatch messages and extract the fields as a strict JSON object with these exact keys:
-    - "company": ("Borderlanders Inc", "Cargoprime Corp", "Successor Inc", or "Pars")
-    - "driver_status": ("Active", "Inactive", or "Terminated")
-    - "driver_type": ("Company driver" or "Owner" or "Finance")
-    - "driver_name": (Full name of driver or team, e.g. "Jonathan Correa", "Daud Abdirahim Aden / Mohamed Yusuf Moalim")
-    - "driver_effective_date": (YYYY-MM-DD if found, else current date)
-    - "driver_termination_date": ("")
-    - "truck_status": ("Active" or "Inactive")
-    - "plate": ("")
-    - "state": ("")
-    - "unit_number": (Unit number if found)
-    - "make": (Truck make like Kenworth, Volvo, Freightliner if found)
-    - "year": (Year if found)
-    - "vin": (VIN if found)
-    - "truck_type": ("")
-
-    Messages:
-    {raw_text}
-    
-    Return ONLY valid JSON. No markdown backticks, just raw JSON.
-    """
-    try:
-        response = client.models.generate_content(
-            model='gemini-3.8-flash',
-            contents=prompt,
-        )
-        clean_text = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean_text)
-        
-        # If AI missed the driver name, use our regex fallback
-        if not data.get("driver_name") or data.get("driver_name") == "Unknown Driver":
-            data["driver_name"] = fallback_driver
-        if not data.get("unit_number"):
-            data["unit_number"] = fallback_unit
-            
-        return data
-    except Exception as e:
-        print(f"AI parsing error: {e}")
-        return {
-            "company": "Borderlanders Inc",
-            "driver_name": fallback_driver,
-            "unit_number": fallback_unit,
             "driver_status": "Active",
             "driver_type": "Company driver"
         }
