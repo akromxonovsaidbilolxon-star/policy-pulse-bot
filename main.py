@@ -64,6 +64,8 @@ def extract_truck_data_with_ai(raw_text):
         print(f"AI parsing error: {e}")
         return {"action_type": "log", "reason": raw_text, "status": "Active"}
 
+import time
+
 if __name__ == "__main__":
     print("Waiting for old instance to close...")
     time.sleep(3)
