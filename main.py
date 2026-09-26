@@ -6,15 +6,12 @@ import time
 import re
 import threading
 from datetime import datetime
-from google import genai
 from collections import defaultdict
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GOOGLE_SCRIPT_URL = os.environ.get("GOOGLE_SCRIPT_URL", "").strip()
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 bot = telebot.TeleBot(TOKEN)
-client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
 message_buffers = defaultdict(list)
 timers = {}
@@ -48,8 +45,8 @@ def process_accumulated_messages(chat_id):
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Extract data via AI, with built-in fallback if quota hits 429
-    structured_data = extract_truck_data_with_ai(combined_text)
+    # Extract data using robust logistics regex patterns
+    structured_data = extract_truck_data(combined_text)
     structured_data["timestamp"] = timestamp
 
     if GOOGLE_SCRIPT_URL:
@@ -59,9 +56,8 @@ def process_accumulated_messages(chat_id):
         except Exception as e:
             print(f"Error posting to Google Sheets: {e}")
 
-def extract_truck_data_with_ai(raw_text):
-    # Smart Regex Fallback extractor (works instantly even if AI hits quota limits)
-    fallback_data = {
+def extract_truck_data(raw_text):
+    data = {
         "company": "Borderlanders Inc",
         "driver_status": "Active",
         "driver_type": "Company driver",
@@ -75,51 +71,33 @@ def extract_truck_data_with_ai(raw_text):
         "vin": ""
     }
     
-    # Extract Driver Name
-    driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
+    # Smart pattern matchers for your dispatch shorthand
+    driver_match = re.search(r'(?:Driver name|Driver):\s*([^\n]+)', raw_text, re.IGNORECASE)
     if driver_match:
-        fallback_data["driver_name"] = driver_match.group(1).strip()
+        data["driver_name"] = driver_match.group(1).strip()
+    else:
+        # Fallback name search after markers
+        alt_name = re.search(r'[-–]\s*([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', raw_text)
+        if alt_name:
+            data["driver_name"] = alt_name.group(1).strip()
         
-    # Extract Unit / Drop off unit
-    unit_match = re.search(r'(?:Unit|Drop off unit|Pick up unit):\s*([0-9]+)', raw_text, re.IGNORECASE)
+    unit_match = re.search(r'(?:Unit|Drop off unit|Pick up unit|Truck)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
     if unit_match:
-        fallback_data["unit_number"] = unit_match.group(1).strip()
+        data["unit_number"] = unit_match.group(1).strip()
         
-    # Extract VIN
     vin_match = re.search(r'Vin:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
     if vin_match:
-        fallback_data["vin"] = vin_match.group(1).strip()
+        data["vin"] = vin_match.group(1).strip()
         
-    # Extract Plate
     plate_match = re.search(r'Plate:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
     if plate_match:
-        fallback_data["plate"] = plate_match.group(1).strip()
-
-    if not client:
-        return fallback_data
-    
-    prompt = (
-        "Extract logistics fields from this text into a strict JSON object with keys: "
-        "'company', 'driver_status', 'driver_type', 'driver_name', 'driver_effective_date', "
-        "'truck_status', 'plate', 'state', 'unit_number', 'make', 'year', 'vin', 'truck_type'.\n\n"
-        f"Text:\n{raw_text}\n\nReturn ONLY valid JSON. No markdown backticks."
-    )
-    try:
-        response = client.models.generate_content(
-            model='gemini-3.8-flash',
-            contents=prompt,
-        )
-        clean_text = response.text.replace("```json", "").replace("```", "").strip()
-        data = json.loads(clean_text)
+        data["plate"] = plate_match.group(1).strip()
         
-        # Merge with fallback if any key is missing
-        for k, v in fallback_data.items():
-            if not data.get(k):
-                data[k] = v
-        return data
-    except Exception as e:
-        print(f"AI Quota/Parsing error ({e}), using smart regex fallback...")
-        return fallback_data
+    make_match = re.search(r'(?:Make|Model)[:\s]*([A-Z0-9\s]+)', raw_text, re.IGNORECASE)
+    if make_match:
+        data["make"] = make_match.group(1).strip()
+
+    return data
 
 if __name__ == "__main__":
     print("Waiting for old instance to close...")
@@ -130,5 +108,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Note: {e}")
         
-    print("Policy Pulse AI Bot is running with Quota Protection...")
+    print("Policy Pulse Fleet Bot is running smoothly...")
     bot.infinity_polling(skip_pending=True)
