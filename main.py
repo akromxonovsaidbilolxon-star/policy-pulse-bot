@@ -15,7 +15,6 @@ client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 @bot.message_handler(func=lambda message: True)
 def handle_incoming_report(message):
     text = message.text or ""
-    
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     # Use AI to parse the text into structured data
@@ -55,7 +54,7 @@ def extract_truck_data_with_ai(raw_text):
     """
     try:
         response = client.models.generate_content(
-            model='gemini-3.8-flash',
+            model='gemini-2.5-flash',
             contents=prompt,
         )
         clean_text = response.text.replace("```json", "").replace("```", "").strip()
