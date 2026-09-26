@@ -2,6 +2,7 @@ import os
 import telebot
 import requests
 import json
+import time
 from datetime import datetime
 from google import genai
 
@@ -16,37 +17,39 @@ client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 def handle_incoming_report(message):
     text = message.text or ""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
     print(f"Received message: {text}")
     
-    # Use AI to parse the text into structured trucking data
     structured_data = extract_truck_data_with_ai(text)
     structured_data["timestamp"] = timestamp
-    
-    # Send structured data to Google Apps Script Web App (/exec URL)
+    structured_data["notes"] = f"Telegram Bot - {text}"
+
     if GOOGLE_SCRIPT_URL:
         try:
             response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data)
-            print(f"Ledger updated response: {response.text}")
+            print(f"Ledger response: {response.text}")
         except Exception as e:
             print(f"Error posting to Google Sheets: {e}")
-    else:
-        print("Error: GOOGLE_SCRIPT_URL environment variable is missing.")
 
 def extract_truck_data_with_ai(raw_text):
-    """Uses Gemini to parse trucking/driver text into strict JSON."""
     if not client:
-        return {"action_type": "log", "reason": raw_text, "status": "Active"}
+        return {}
     
     prompt = f"""
-    Analyze this logistics, trucking, or driver update message and extract the fields as a JSON object with these exact keys:
-    - "company": (e.g. "CargoPrime Corp" or "Borderlanders Inc")
-    - "driver_name": (Full name of driver if mentioned, else null)
-    - "action_type": (Choose one: "driver_terminated", "driver_added", "driver_moved", "driver_changed", "truck_swap", "truck_added", "truck_removed", "truck_inactive", "truck_active", or "log")
-    - "status": (Choose one: "Active", "Terminated", "Inactive", "Swapped")
+    Analyze this trucking/driver update message and extract fields into a JSON object with these exact keys:
+    - "company": ("Borderlanders Inc" or "Cargoprime Corp" or company mentioned)
+    - "driver_status": ("Active", "Inactive", or "Terminated")
+    - "driver_type": ("Company driver" or "Owner" or "Finance")
+    - "driver_name": (Full name of driver if mentioned, else "Unknown Driver")
+    - "driver_effective_date": (Effective date in YYYY-MM-DD if mentioned, else current date)
+    - "driver_termination_date": (Termination date if mentioned, else "")
+    - "truck_status": ("Active" or "Inactive" or "Changed unit")
+    - "plate": (Plate number if mentioned, else "")
+    - "state": (State code like IN, PA, GA if mentioned, else "")
     - "unit_number": (Unit number if mentioned, else "")
+    - "make": (Truck make like Freightliner, Volvo, Peterbilt if mentioned, else "")
+    - "year": (Year like 2022, 2026 if mentioned, else "")
     - "vin": (VIN number if mentioned, else "")
-    - "reason": (Reason for change, termination, or notes if mentioned, else "")
+    - "truck_type": (Truck type like Penske Lease, Ryder Rental if mentioned, else "")
 
     Message text:
     {raw_text}
@@ -62,18 +65,16 @@ def extract_truck_data_with_ai(raw_text):
         return json.loads(clean_text)
     except Exception as e:
         print(f"AI parsing error: {e}")
-        return {"action_type": "log", "reason": raw_text, "status": "Active"}
-
-import time
+        return {}
 
 if __name__ == "__main__":
     print("Waiting for old instance to close...")
     time.sleep(3)
-    print("Clearing any lingering webhooks...")
+    print("Clearing webhooks...")
     try:
         bot.remove_webhook()
     except Exception as e:
-        print(f"Webhook clear note: {e}")
+        print(f"Note: {e}")
         
     print("Policy Pulse AI Bot is running...")
     bot.infinity_polling(skip_pending=True)
