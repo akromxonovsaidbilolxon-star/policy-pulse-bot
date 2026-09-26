@@ -3,6 +3,7 @@ import telebot
 import requests
 import json
 import time
+import re
 import threading
 from datetime import datetime
 from google import genai
@@ -15,7 +16,6 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 bot = telebot.TeleBot(TOKEN)
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
-# Thread-safe storage for message buffering
 message_buffers = defaultdict(list)
 timers = {}
 buffer_lock = threading.Lock()
@@ -28,14 +28,10 @@ def handle_incoming_report(message):
         return
     
     with buffer_lock:
-        print(f"Captured part from chat {chat_id}: {text[:50]}...")
         message_buffers[chat_id].append(text)
-        
-        # Reset the timer safely
         if chat_id in timers:
             timers[chat_id].cancel()
-            
-        timers[chat_id] = threading.Timer(5.0, process_accumulated_messages, args=[chat_id])
+        timers[chat_id] = threading.Timer(4.0, process_accumulated_messages, args=[chat_id])
         timers[chat_id].start()
 
 def process_accumulated_messages(chat_id):
@@ -47,15 +43,14 @@ def process_accumulated_messages(chat_id):
     if not texts:
         return
         
-    combined_text = "\n--- [NEW MESSAGE PART] ---\n".join(texts)
-    print(f"=== PROCESSING COMBINED BLOCK ({len(texts)} parts) ===")
-    print(combined_text[:300]) # Prints preview to Railway logs to verify everything is captured
+    combined_text = "\n".join(texts)
+    print(f"=== PROCESSING BLOCK ({len(texts)} parts) ===")
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
+    # Extract data via AI, with built-in fallback if quota hits 429
     structured_data = extract_truck_data_with_ai(combined_text)
     structured_data["timestamp"] = timestamp
-    structured_data["notes"] = f"Telegram Bot - {combined_text[:120]}"
 
     if GOOGLE_SCRIPT_URL:
         try:
@@ -65,50 +60,66 @@ def process_accumulated_messages(chat_id):
             print(f"Error posting to Google Sheets: {e}")
 
 def extract_truck_data_with_ai(raw_text):
+    # Smart Regex Fallback extractor (works instantly even if AI hits quota limits)
+    fallback_data = {
+        "company": "Borderlanders Inc",
+        "driver_status": "Active",
+        "driver_type": "Company driver",
+        "driver_name": "",
+        "truck_status": "Active",
+        "plate": "",
+        "state": "",
+        "unit_number": "",
+        "make": "",
+        "year": "",
+        "vin": ""
+    }
+    
+    # Extract Driver Name
+    driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
+    if driver_match:
+        fallback_data["driver_name"] = driver_match.group(1).strip()
+        
+    # Extract Unit / Drop off unit
+    unit_match = re.search(r'(?:Unit|Drop off unit|Pick up unit):\s*([0-9]+)', raw_text, re.IGNORECASE)
+    if unit_match:
+        fallback_data["unit_number"] = unit_match.group(1).strip()
+        
+    # Extract VIN
+    vin_match = re.search(r'Vin:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+    if vin_match:
+        fallback_data["vin"] = vin_match.group(1).strip()
+        
+    # Extract Plate
+    plate_match = re.search(r'Plate:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+    if plate_match:
+        fallback_data["plate"] = plate_match.group(1).strip()
+
     if not client:
-        return {
-            "company": "Borderlanders Inc",
-            "driver_name": "",
-            "driver_status": "Active",
-            "driver_type": "Company driver"
-        }
+        return fallback_data
     
     prompt = (
-        "You are an advanced logistics data extraction engine. Analyze the following combined Telegram message block carefully. "
-        "These messages belong together as a single dispatch batch. Extract all driver names, unit numbers, companies, and truck specs.\n\n"
-        "CRITICAL RULES:\n"
-        "- Look for actual human names (e.g., 'Jonathan Correa', 'Daud Abdirahim Aden', 'Mohamed Yusuf Moalim').\n"
-        "- IGNORE administrative UI words like 'Date', 'Inspector', 'Driver GTG', 'Telegram'.\n"
-        "- If no genuine human driver name is present, return an empty string '' for 'driver_name'.\n\n"
-        "Extract fields into a strict JSON object with these exact keys:\n"
-        "- 'company': ('Successor Inc', 'Cargoprime Corp', 'Borderlanders Inc', or 'Pars', default to 'Borderlanders Inc')\n"
-        "- 'driver_status': ('Active', 'Inactive', or 'Terminated')\n"
-        "- 'driver_type': ('Company driver' or 'Owner')\n"
-        "- 'driver_name': (Real full driver name or team string, or '' if none)\n"
-        "- 'driver_effective_date': (YYYY-MM-DD if found, else current date)\n"
-        "- 'unit_number': (Unit number if found, else '')\n"
-        "- 'make': (Truck make if found, else '')\n"
-        "- 'year': (Year if found, else '')\n"
-        "- 'vin': (VIN if found, else '')\n\n"
-        f"Combined Messages:\n{raw_text}\n\n"
-        "Return ONLY valid JSON. No markdown backticks, just raw JSON."
+        "Extract logistics fields from this text into a strict JSON object with keys: "
+        "'company', 'driver_status', 'driver_type', 'driver_name', 'driver_effective_date', "
+        "'truck_status', 'plate', 'state', 'unit_number', 'make', 'year', 'vin', 'truck_type'.\n\n"
+        f"Text:\n{raw_text}\n\nReturn ONLY valid JSON. No markdown backticks."
     )
     try:
         response = client.models.generate_content(
-            model='gemini-3.8-flash',
+            model='gemini-1.5-flash',
             contents=prompt,
         )
         clean_text = response.text.replace("```json", "").replace("```", "").strip()
         data = json.loads(clean_text)
+        
+        # Merge with fallback if any key is missing
+        for k, v in fallback_data.items():
+            if not data.get(k):
+                data[k] = v
         return data
     except Exception as e:
-        print(f"AI parsing error: {e}")
-        return {
-            "company": "Borderlanders Inc",
-            "driver_name": "",
-            "driver_status": "Active",
-            "driver_type": "Company driver"
-        }
+        print(f"AI Quota/Parsing error ({e}), using smart regex fallback...")
+        return fallback_data
 
 if __name__ == "__main__":
     print("Waiting for old instance to close...")
@@ -119,5 +130,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Note: {e}")
         
-    print("Policy Pulse AI Bot is running with Thread-Safe Buffering...")
+    print("Policy Pulse AI Bot is running with Quota Protection...")
     bot.infinity_polling(skip_pending=True)
