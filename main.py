@@ -3,10 +3,10 @@ import telebot
 import requests
 import json
 import time
+import threading
 from datetime import datetime
 from google import genai
 from collections import defaultdict
-from threading import Timer
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GOOGLE_SCRIPT_URL = os.environ.get("GOOGLE_SCRIPT_URL", "").strip()
@@ -15,8 +15,10 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 bot = telebot.TeleBot(TOKEN)
 client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 
+# Thread-safe storage for message buffering
 message_buffers = defaultdict(list)
 timers = {}
+buffer_lock = threading.Lock()
 
 @bot.message_handler(func=lambda message: True)
 def handle_incoming_report(message):
@@ -25,22 +27,29 @@ def handle_incoming_report(message):
     if not text:
         return
     
-    print(f"Captured text from chat {chat_id}: {text[:60]}...")
-    message_buffers[chat_id].append(text)
-    
-    if chat_id in timers:
-        timers[chat_id].cancel()
+    with buffer_lock:
+        print(f"Captured part from chat {chat_id}: {text[:50]}...")
+        message_buffers[chat_id].append(text)
         
-    timers[chat_id] = Timer(6.0, process_accumulated_messages, args=[chat_id])
-    timers[chat_id].start()
+        # Reset the timer safely
+        if chat_id in timers:
+            timers[chat_id].cancel()
+            
+        timers[chat_id] = threading.Timer(5.0, process_accumulated_messages, args=[chat_id])
+        timers[chat_id].start()
 
 def process_accumulated_messages(chat_id):
-    texts = message_buffers.pop(chat_id, [])
+    with buffer_lock:
+        texts = message_buffers.pop(chat_id, [])
+        if chat_id in timers:
+            del timers[chat_id]
+            
     if not texts:
         return
         
-    combined_text = "\n---\n".join(texts)
-    print(f"Processing combined message block...")
+    combined_text = "\n--- [NEW MESSAGE PART] ---\n".join(texts)
+    print(f"=== PROCESSING COMBINED BLOCK ({len(texts)} parts) ===")
+    print(combined_text[:300]) # Prints preview to Railway logs to verify everything is captured
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
@@ -65,14 +74,14 @@ def extract_truck_data_with_ai(raw_text):
         }
     
     prompt = (
-        "You are an advanced logistics data extraction engine. Analyze the following Telegram message text carefully. "
-        "Your job is to extract real driver names, unit numbers, companies, and truck specs.\n\n"
-        "CRITICAL RULES FOR DRIVER NAMES:\n"
-        "- Look for actual human names (e.g., 'Jonathan Correa', 'Daud Abdirahim Aden', 'Mohamed Yusuf Moalim', 'Frank Rodriguez').\n"
-        "- IGNORE administrative words like 'Date', 'Inspector', 'Driver GTG', 'Telegram', or group chat titles.\n"
-        "- If no genuine human driver name is present in the text, return an empty string '' for 'driver_name'. Do NOT guess or pick random words.\n\n"
+        "You are an advanced logistics data extraction engine. Analyze the following combined Telegram message block carefully. "
+        "These messages belong together as a single dispatch batch. Extract all driver names, unit numbers, companies, and truck specs.\n\n"
+        "CRITICAL RULES:\n"
+        "- Look for actual human names (e.g., 'Jonathan Correa', 'Daud Abdirahim Aden', 'Mohamed Yusuf Moalim').\n"
+        "- IGNORE administrative UI words like 'Date', 'Inspector', 'Driver GTG', 'Telegram'.\n"
+        "- If no genuine human driver name is present, return an empty string '' for 'driver_name'.\n\n"
         "Extract fields into a strict JSON object with these exact keys:\n"
-        "- 'company': (Extract company name like 'Successor Inc', 'Cargoprime Corp', 'Borderlanders Inc', or 'Pars', default to 'Borderlanders Inc')\n"
+        "- 'company': ('Successor Inc', 'Cargoprime Corp', 'Borderlanders Inc', or 'Pars', default to 'Borderlanders Inc')\n"
         "- 'driver_status': ('Active', 'Inactive', or 'Terminated')\n"
         "- 'driver_type': ('Company driver' or 'Owner')\n"
         "- 'driver_name': (Real full driver name or team string, or '' if none)\n"
@@ -81,7 +90,7 @@ def extract_truck_data_with_ai(raw_text):
         "- 'make': (Truck make if found, else '')\n"
         "- 'year': (Year if found, else '')\n"
         "- 'vin': (VIN if found, else '')\n\n"
-        f"Messages:\n{raw_text}\n\n"
+        f"Combined Messages:\n{raw_text}\n\n"
         "Return ONLY valid JSON. No markdown backticks, just raw JSON."
     )
     try:
@@ -110,5 +119,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Note: {e}")
         
-    print("Policy Pulse AI Bot is running...")
+    print("Policy Pulse AI Bot is running with Thread-Safe Buffering...")
     bot.infinity_polling(skip_pending=True)
