@@ -106,7 +106,7 @@ def extract_truck_data_with_ai(raw_text):
     )
     try:
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-1.5-flash',
             contents=prompt,
         )
         clean_text = response.text.replace("```json", "").replace("```", "").strip()
