@@ -64,6 +64,11 @@ def extract_truck_data_with_ai(raw_text):
         return {"action_type": "log", "notes": raw_text}
 
 if __name__ == "__main__":
-    bot.remove_webhook()
+    print("Clearing any lingering webhooks...")
+    try:
+        bot.remove_webhook()
+    except Exception as e:
+        print(f"Webhook clear note: {e}")
+        
     print("Policy Pulse AI Bot is running...")
-    bot.infinity_polling()
+    bot.infinity_polling(skip_pending=True)
