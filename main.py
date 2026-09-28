@@ -72,7 +72,7 @@ def extract_truck_data(raw_text):
         "pickup_plate": "",
         "make": "",
         "event_date": datetime.now().strftime("%Y-%m-%d"),
-        "location": ""
+        "location": "Rolling"
     }
     
     text_upper = raw_text.upper()
@@ -84,6 +84,28 @@ def extract_truck_data(raw_text):
     elif "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
         data["action_type"] = "DROPOFF"
         
+    # INTELLIGENT LOCATION / STATUS CLASSIFIER
+    if "YARD" in text_upper or "DROPPED HIS UNIT TO THE YARD" in text_upper:
+        data["location"] = "Yard"
+    elif "SHOP" in text_upper or "REPAIR" in text_upper:
+        data["location"] = "Shop"
+    elif "RETURN" in text_upper:
+        data["location"] = "Returned"
+    elif "HOME" in text_upper:
+        data["location"] = "Home"
+    elif "VACATION" in text_upper or "LEAVE" in text_upper:
+        data["location"] = "Vacation"
+    else:
+        loc_match = re.search(r'(?:Location|Shop Name):\s*([^\n]+)', raw_text, re.IGNORECASE)
+        if loc_match:
+            val = loc_match.group(1).strip()
+            if "yard" in val.lower():
+                data["location"] = "Yard"
+            elif "shop" in val.lower() or "garage" in val.lower():
+                data["location"] = "Shop"
+            else:
+                data["location"] = val
+
     # Extract Company
     company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if company_match:
@@ -94,7 +116,7 @@ def extract_truck_data(raw_text):
     if date_match:
         data["event_date"] = date_match.group(1).strip()
         
-    # Extract Driver Name and Check for Team Split
+    # Extract Driver Name
     driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if driver_match:
         d_name = driver_match.group(1).strip()
@@ -106,17 +128,16 @@ def extract_truck_data(raw_text):
         if alt_name:
             data["driver_name"] = alt_name.group(1).strip()
         
-    # Extract Unit (Drop or Primary Unit)
+    # Extract Unit Numbers
     drop_unit_match = re.search(r'(?:Drop off unit|Drop unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
     if drop_unit_match:
         data["unit_number"] = drop_unit_match.group(1).strip()
 
-    # Extract Pick up Unit
     pick_unit_match = re.search(r'Pick up unit[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
     if pick_unit_match:
         data["pickup_unit"] = pick_unit_match.group(1).strip()
         
-    # Extract VINs
+    # Extract VINs & Plates
     vins = re.findall(r'Vin:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
     if len(vins) > 1:
         data["vin"] = vins[0]
@@ -124,7 +145,6 @@ def extract_truck_data(raw_text):
     elif len(vins) == 1:
         data["vin"] = vins[0]
             
-    # Extract Plates
     plates = re.findall(r'Plate:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
     if len(plates) > 1:
         data["plate"] = plates[0]
@@ -132,25 +152,20 @@ def extract_truck_data(raw_text):
     elif len(plates) == 1:
         data["plate"] = plates[0]
         
-    # Extract Make
     make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if make_match:
         data["make"] = make_match.group(1).strip()
-        
-    loc_match = re.search(r'Location:\s*([^\n]+)', raw_text, re.IGNORECASE)
-    if loc_match:
-        data["location"] = loc_match.group(1).strip()
 
     return data
 
 if __name__ == "__main__":
     print("Waiting for old instance to close...")
     time.sleep(3)
-    print("Clearing webhooks বাক্স...")
+    print("Clearing webhooks...")
     try:
         bot.remove_webhook()
     except Exception as e:
         print(f"Note: {e}")
         
-    print("Policy Pulse Fleet Bot is running with Smart Team Splitting...")
+    print("Policy Pulse Fleet Bot is running with Smart Location Tagging...")
     bot.infinity_polling(skip_pending=True)
