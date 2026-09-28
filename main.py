@@ -84,7 +84,7 @@ def extract_truck_data(raw_text):
     elif "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
         data["action_type"] = "DROPOFF"
         
-    # INTELLIGENT LOCATION / STATUS CLASSIFIER WITH "SHOP" DEFAULT FOR SWAPS/DROPS
+    # INTELLIGENT LOCATION CLASSIFIER WITH DEFAULT "SHOP" RULE FOR SWAPS/DROPS
     if "YARD" in text_upper:
         data["location"] = "Yard"
     elif "SHOP" in text_upper or "REPAIR" in text_upper or "ISSUE" in text_upper:
@@ -96,9 +96,8 @@ def extract_truck_data(raw_text):
     elif "VACATION" in text_upper or "LEAVE" in text_upper:
         data["location"] = "Vacation"
     else:
-        # If no specific location is mentioned, default Swaps and Dropoffs to "Shop"
         if data["action_type"] in ["SWAP", "DROPOFF"]:
-            data["location"] = "Shop"
+            data["location"] = "Shop"  # Default unassigned drops/swaps to Shop
         else:
             data["location"] = "Rolling"
 
@@ -125,7 +124,7 @@ def extract_truck_data(raw_text):
             data["driver_name"] = alt_name.group(1).strip()
         
     # Extract Unit Numbers
-    drop_unit_match = re.search(r'(?:Drop off unit|Drop unit|Unit|Drop unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
+    drop_unit_match = re.search(r'(?:Drop off unit|Drop unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
     if drop_unit_match:
         data["unit_number"] = drop_unit_match.group(1).strip()
 
@@ -150,7 +149,7 @@ def extract_truck_data(raw_text):
         
     make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if make_match:
-        data["make"] = make_match.group(1).tains = make_match.group(1).strip()
+        data["make"] = make_match.group(1).strip()
 
     return data
 
@@ -163,5 +162,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Note: {e}")
         
-    print("Policy Pulse Fleet Bot is running with Smart Shop Defaults...")
+    print("Policy Pulse Fleet Bot is running error-free...")
     bot.infinity_polling(skip_pending=True)
