@@ -58,7 +58,7 @@ def process_accumulated_messages(chat_id):
 
 def extract_truck_data(raw_text):
     data = {
-        "company": "Cargo Prime",
+        "company": "Borderlanders Inc",
         "action_type": "PICKUP",
         "driver_status": "Active",
         "driver_type": "Company driver",
@@ -84,10 +84,10 @@ def extract_truck_data(raw_text):
     elif "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
         data["action_type"] = "DROPOFF"
         
-    # INTELLIGENT LOCATION / STATUS CLASSIFIER
-    if "YARD" in text_upper or "DROPPED HIS UNIT TO THE YARD" in text_upper:
+    # INTELLIGENT LOCATION / STATUS CLASSIFIER WITH "SHOP" DEFAULT FOR SWAPS/DROPS
+    if "YARD" in text_upper:
         data["location"] = "Yard"
-    elif "SHOP" in text_upper or "REPAIR" in text_upper:
+    elif "SHOP" in text_upper or "REPAIR" in text_upper or "ISSUE" in text_upper:
         data["location"] = "Shop"
     elif "RETURN" in text_upper:
         data["location"] = "Returned"
@@ -96,15 +96,11 @@ def extract_truck_data(raw_text):
     elif "VACATION" in text_upper or "LEAVE" in text_upper:
         data["location"] = "Vacation"
     else:
-        loc_match = re.search(r'(?:Location|Shop Name):\s*([^\n]+)', raw_text, re.IGNORECASE)
-        if loc_match:
-            val = loc_match.group(1).strip()
-            if "yard" in val.lower():
-                data["location"] = "Yard"
-            elif "shop" in val.lower() or "garage" in val.lower():
-                data["location"] = "Shop"
-            else:
-                data["location"] = val
+        # If no specific location is mentioned, default Swaps and Dropoffs to "Shop"
+        if data["action_type"] in ["SWAP", "DROPOFF"]:
+            data["location"] = "Shop"
+        else:
+            data["location"] = "Rolling"
 
     # Extract Company
     company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
@@ -129,7 +125,7 @@ def extract_truck_data(raw_text):
             data["driver_name"] = alt_name.group(1).strip()
         
     # Extract Unit Numbers
-    drop_unit_match = re.search(r'(?:Drop off unit|Drop unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
+    drop_unit_match = re.search(r'(?:Drop off unit|Drop unit|Unit|Drop unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
     if drop_unit_match:
         data["unit_number"] = drop_unit_match.group(1).strip()
 
@@ -154,7 +150,7 @@ def extract_truck_data(raw_text):
         
     make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if make_match:
-        data["make"] = make_match.group(1).strip()
+        data["make"] = make_match.group(1).tains = make_match.group(1).strip()
 
     return data
 
@@ -167,5 +163,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Note: {e}")
         
-    print("Policy Pulse Fleet Bot is running with Smart Location Tagging...")
+    print("Policy Pulse Fleet Bot is running with Smart Shop Defaults...")
     bot.infinity_polling(skip_pending=True)
