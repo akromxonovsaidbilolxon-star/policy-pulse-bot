@@ -84,10 +84,6 @@ def extract_truck_data(raw_text):
     elif "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
         data["action_type"] = "DROPOFF"
         
-    # Detect Team Driver
-    if "TEAM" in text_upper or "&" in raw_text or " AND " in text_upper:
-        data["is_team_driver"] = True
-        
     # Extract Company
     company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if company_match:
@@ -98,17 +94,20 @@ def extract_truck_data(raw_text):
     if date_match:
         data["event_date"] = date_match.group(1).strip()
         
-    # Extract Driver Name
+    # Extract Driver Name and Check for Team Split
     driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if driver_match:
-        data["driver_name"] = driver_match.group(1).strip()
+        d_name = driver_match.group(1).strip()
+        data["driver_name"] = d_name
+        if "/" in d_name or "&" in d_name or "TEAM" in d_name.upper():
+            data["is_team_driver"] = True
     else:
         alt_name = re.search(r'[-–]\s*([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', raw_text)
         if alt_name:
             data["driver_name"] = alt_name.group(1).strip()
         
-    # Extract Drop Unit
-    drop_unit_match = re.search(r'(?:Drop unit|Drop off unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
+    # Extract Unit (Drop or Primary Unit)
+    drop_unit_match = re.search(r'(?:Drop off unit|Drop unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
     if drop_unit_match:
         data["unit_number"] = drop_unit_match.group(1).strip()
 
@@ -147,11 +146,11 @@ def extract_truck_data(raw_text):
 if __name__ == "__main__":
     print("Waiting for old instance to close...")
     time.sleep(3)
-    print("Clearing webhooks...")
+    print("Clearing webhooks বাক্স...")
     try:
         bot.remove_webhook()
     except Exception as e:
         print(f"Note: {e}")
         
-    print("Policy Pulse Fleet Bot is running with Intelligent Section Grouping & Team Logic...")
+    print("Policy Pulse Fleet Bot is running with Smart Team Splitting...")
     bot.infinity_polling(skip_pending=True)
