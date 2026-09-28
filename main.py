@@ -1,3 +1,61 @@
+import os
+import telebot
+import requests
+import json
+import time
+import re
+import threading
+from datetime import datetime
+from collections import defaultdict
+
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+GOOGLE_SCRIPT_URL = os.environ.get("GOOGLE_SCRIPT_URL", "").strip()
+
+bot = telebot.TeleBot(TOKEN)
+
+message_buffers = defaultdict(list)
+timers = {}
+buffer_lock = threading.Lock()
+
+@bot.message_handler(func=lambda message: True)
+def handle_incoming_report(message):
+    chat_id = message.chat.id
+    text = message.text or message.caption or ""
+    if not text:
+        return
+    
+    with buffer_lock:
+        message_buffers[chat_id].append(text)
+        if chat_id in timers:
+            timers[chat_id].cancel()
+        timers[chat_id] = threading.Timer(4.0, process_accumulated_messages, args=[chat_id])
+        timers[chat_id].start()
+
+def process_accumulated_messages(chat_id):
+    with buffer_lock:
+        texts = message_buffers.pop(chat_id, [])
+        if chat_id in timers:
+            del timers[chat_id]
+            
+    if not texts:
+        return
+        
+    combined_text = "\n".join(texts)
+    print(f"=== PROCESSING BLOCK ({len(texts)} parts) ===")
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Extract data using robust logistics regex patterns
+    structured_data = extract_truck_data(combined_text)
+    structured_data["timestamp"] = timestamp
+
+    if GOOGLE_SCRIPT_URL:
+        try:
+            response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data)
+            print(f"Ledger response: {response.text}")
+        except Exception as e:
+            print(f"Error posting to Google Sheets: {e}")
+
 def extract_truck_data(raw_text):
     data = {
         "company": "Borderlanders Inc",
@@ -29,8 +87,12 @@ def extract_truck_data(raw_text):
     driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if driver_match:
         data["driver_name"] = driver_match.group(1).strip()
+    else:
+        alt_name = re.search(r'[-–]\s*([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', raw_text)
+        if alt_name:
+            data["driver_name"] = alt_name.group(1).strip()
         
-    # Extract Unit Number (handles both drop off and pick up labels)
+    # Extract Unit Number
     unit_match = re.search(r'(?:Unit|Drop off unit|Pick up unit|Truck)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
     if unit_match:
         data["unit_number"] = unit_match.group(1).strip()
@@ -52,3 +114,15 @@ def extract_truck_data(raw_text):
         data["location"] = loc_match.group(1).strip()
 
     return data
+
+if __name__ == "__main__":
+    print("Waiting for old instance to close...")
+    time.sleep(3)
+    print("Clearing webhooks...")
+    try:
+        bot.remove_webhook()
+    except Exception as e:
+        print(f"Note: {e}")
+        
+    print("Policy Pulse Fleet Bot is running smoothly...")
+    bot.infinity_polling(skip_pending=True)
