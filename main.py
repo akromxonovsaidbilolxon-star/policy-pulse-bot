@@ -45,9 +45,9 @@ def process_accumulated_messages(chat_id):
     
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
-    # Extract data using robust logistics regex patterns for Swaps, Drops, and Pickups
     structured_data = extract_truck_data(combined_text)
     structured_data["timestamp"] = timestamp
+    structured_data["raw_message"] = combined_text
 
     if GOOGLE_SCRIPT_URL:
         try:
@@ -60,26 +60,26 @@ def extract_truck_data(raw_text):
     data = {
         "company": "Cargo Prime",
         "action_type": "PICKUP",
+        "driver_status": "Active",
+        "driver_type": "Company driver",
         "driver_name": "",
-        "unit_number": "",     # Drop unit
-        "pickup_unit": "",     # New pickup unit
-        "pickup_vin": "",
-        "pickup_plate": "",
-        "pickup_make": "",
+        "unit_number": "",     # Drop unit or primary unit
+        "pickup_unit": "",     # New unit for swaps
+        "vin": "",
+        "plate": "",
+        "make": "",
         "event_date": datetime.now().strftime("%Y-%m-%d"),
-        "location": "",
-        "notes": f"Telegram - {raw_text[:100]}"
+        "location": ""
     }
     
     text_upper = raw_text.upper()
-    if "SWAP" in text_upper:
+    if "SWAP" in text_upper or "SWAPPED" in text_upper:
         data["action_type"] = "SWAP"
+    elif "TERMINAT" in text_upper:
+        data["action_type"] = "TERMINATION"
+        data["driver_status"] = "Terminated"
     elif "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
         data["action_type"] = "DROPOFF"
-    elif "SHOP" in text_upper:
-        data["action_type"] = "SHOP"
-    elif "RETURN" in text_upper:
-        data["action_type"] = "RETURNED"
         
     # Extract Date
     date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})', raw_text, re.IGNORECASE)
@@ -95,40 +95,30 @@ def extract_truck_data(raw_text):
         if alt_name:
             data["driver_name"] = alt_name.group(1).strip()
         
-    # Extract Drop Unit
+    # Extract Drop Unit / Primary Unit
     drop_unit_match = re.search(r'(?:Drop unit|Unit|Drop off unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
     if drop_unit_match:
         data["unit_number"] = drop_unit_match.group(1).strip()
         
-    # Extract Pick up Unit
+    # Extract Pick up Unit (for Swaps)
     pick_unit_match = re.search(r'Pick up unit[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
     if pick_unit_match:
         data["pickup_unit"] = pick_unit_match.group(1).strip()
         
-    # Extract Pick up VIN
-    pick_vin_match = re.search(r'Pick up unit.*?Vin:\s*([A-Z0-9]+)', raw_text, re.DOTALL | re.IGNORECASE)
-    if pick_vin_match:
-        data["pickup_vin"] = pick_vin_match.group(1).strip()
-    else:
-        vins = re.findall(r'Vin:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
-        if len(vins) > 1:
-            data["pickup_vin"] = vins[1]
-        elif len(vins) == 1:
-            data["pickup_vin"] = vins[0]
+    # Extract VIN
+    vin_match = re.search(r'Vin:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+    if vin_match:
+        data["vin"] = vin_match.group(1).strip()
             
-    # Extract Pick up Plate
-    plates = re.findall(r'Plate:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
-    if len(plates) > 1:
-        data["pickup_plate"] = plates[1]
-    elif len(plates) == 1:
-        data["pickup_plate"] = plates[0]
+    # Extract Plate
+    plate_match = re.search(r'Plate:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+    if plate_match:
+        data["plate"] = plate_match.group(1).strip()
         
-    # Extract Pick up Make
-    makes = re.findall(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
-    if len(makes) > 1:
-        data["pickup_make"] = makes[1]
-    elif len(makes) == 1:
-        data["pickup_make"] = makes[0]
+    # Extract Make
+    make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
+    if make_match:
+        data["make"] = make_match.group(1).strip()
         
     loc_match = re.search(r'Location:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if loc_match:
@@ -145,5 +135,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Note: {e}")
         
-    print("Policy Pulse Fleet Bot is running with SWAP intelligence...")
+    print("Policy Pulse Fleet Bot is running with Full Lifecycle & Audit Logging...")
     bot.infinity_polling(skip_pending=True)
