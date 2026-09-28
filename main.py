@@ -64,16 +64,17 @@ def extract_truck_data(raw_text):
         "driver_type": "Company driver",
         "driver_name": "",
         "is_team_driver": False,
-        "unit_number": "",     
-        "pickup_unit": "",     
-        "vin": "",
-        "pickup_vin": "",
-        "plate": "",
-        "pickup_plate": "",
-        "make": "",
-        "year": "",
+        "unit_number": "",     # Drop Unit
+        "pickup_unit": "",     # New Unit
+        "vin": "",             # Drop VIN
+        "pickup_vin": "",      # New VIN
+        "plate": "",           # Drop Plate
+        "pickup_plate": "",    # New Plate
+        "make": "",            # New Make
+        "year": "",            # New Year
+        "truck_type": "Penske Truck Rental", # Default or parsed
         "event_date": datetime.now().strftime("%Y-%m-%d"),
-        "location": "Rolling"
+        "location": "Shop"
     }
     
     text_upper = raw_text.upper()
@@ -85,10 +86,10 @@ def extract_truck_data(raw_text):
     elif "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
         data["action_type"] = "DROPOFF"
         
-    # INTELLIGENT LOCATION CLASSIFIER WITH DEFAULT "SHOP" RULE FOR SWAPS/DROPS
+    # Location Tagging
     if "YARD" in text_upper:
         data["location"] = "Yard"
-    elif "SHOP" in text_upper or "REPAIR" in text_upper or "ISSUE" in text_upper:
+    elif "SHOP" in text_upper or "REPAIR" in text_upper or "ISSUE" in text_upper or "PENSKE" in text_upper:
         data["location"] = "Shop"
     elif "RETURN" in text_upper:
         data["location"] = "Returned"
@@ -98,7 +99,7 @@ def extract_truck_data(raw_text):
         data["location"] = "Vacation"
     else:
         if data["action_type"] in ["SWAP", "DROPOFF"]:
-            data["location"] = "Shop"  # Default unassigned drops/swaps to Shop
+            data["location"] = "Shop"
         else:
             data["location"] = "Rolling"
 
@@ -123,39 +124,75 @@ def extract_truck_data(raw_text):
         alt_name = re.search(r'[-–]\s*([A-Z][a-z]+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)', raw_text)
         if alt_name:
             data["driver_name"] = alt_name.group(1).strip()
-        
-    # Extract Unit Numbers
-    drop_unit_match = re.search(r'(?:Drop off unit|Drop unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
+
+    # Split message into Drop section and Pickup section for precise attribute parsing
+    parts = re.split(r'Pick up unit', raw_text, flags=re.IGNORECASE)
+    drop_section = parts[0]
+    pickup_section = parts[1] if len(parts) > 1 else ""
+
+    # Drop Unit
+    drop_unit_match = re.search(r'(?:Drop off unit|Drop unit|Unit)[:\s#]*([0-9]+)', drop_section, re.IGNORECASE)
     if drop_unit_match:
         data["unit_number"] = drop_unit_match.group(1).strip()
 
-    pick_unit_match = re.search(r'Pick up unit[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
-    if pick_unit_match:
-        data["pickup_unit"] = pick_unit_match.group(1).strip()
-        
-    # Extract VINs & Plates
-    vins = re.findall(r'Vin:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
-    if len(vins) > 1:
-        data["vin"] = vins[0]
-        data["pickup_vin"] = vins[1]
-    elif len(vins) == 1:
-        data["vin"] = vins[0]
+    # Drop VIN & Plate
+    drop_vin = re.search(r'Vin:\s*([A-Z0-9]+)', drop_section, re.IGNORECASE)
+    if drop_vin:
+        data["vin"] = drop_vin.group(1).strip()
+    drop_plate = re.search(r'Plate:\s*([A-Z0-9]+)', drop_section, re.IGNORECASE)
+    if drop_plate:
+        data["plate"] = drop_plate.group(1).strip()
+
+    # Pickup Unit
+    if pickup_section:
+        pick_unit_match = re.search(r'[:\s#]*([0-9]+)', pickup_section)
+        if pick_unit_match:
+            data["pickup_unit"] = pick_unit_match.group(1).strip()
+
+        pick_vin = re.search(r'Vin:\s*([A-Z0-9]+)', pickup_section, re.IGNORECASE)
+        if pick_vin:
+            data["pickup_vin"] = pick_vin.group(1).strip()
             
-    plates = re.findall(r'Plate:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
-    if len(plates) > 1:
-        data["plate"] = plates[0]
-        data["pickup_plate"] = plates[1]
-    elif len(plates) == 1:
-        data["plate"] = plates[0]
-        
-    # Extract Make & Year
-    make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
-    if make_match:
-        make_val = make_match.group(1).strip()
-        data["make"] = make_val
-        year_match = re.search(r'(20[0-9]{2})', make_val)
-        if year_match:
-            data["year"] = year_match.group(1)
+        pick_plate = re.search(r'Plate:\s*([A-Z0-9]+)', pickup_section, re.IGNORECASE)
+        if pick_plate:
+            data["pickup_plate"] = pick_plate.group(1).strip()
+
+        make_match = re.search(r'Make model year:\s*([^\n]+)', pickup_section, re.IGNORECASE)
+        if make_match:
+            make_val = make_match.group(1).strip()
+            data["make"] = make_val
+            year_match = re.search(r'(20[0-9]{2})', make_val)
+            if year_match:
+                data["year"] = year_match.group(1)
+    else:
+        # Fallback if single unit message
+        pick_unit_match = re.search(r'Unit[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
+        if pick_unit_match:
+            data["pickup_unit"] = pick_unit_match.group(1).strip()
+        vins = re.findall(r'Vin:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+        if vins:
+            data["pickup_vin"] = vins[-1]
+        plates = re.findall(r'Plate:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+        if plates:
+            data["pickup_plate"] = plates[-1]
+        make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
+        if make_match:
+            make_val = make_match.group(1).strip()
+            data["make"] = make_val
+            year_match = re.search(r'(20[0-9]{2})', make_val)
+            if year_match:
+                data["year"] = year_match.group(1)
+
+    # Detect Truck Type / Rental Vendor
+    text_lower = raw_text.lower()
+    if "penske" in text_lower:
+        data["truck_type"] = "Penske Truck Rental"
+    elif "ryder" in text_lower:
+        data["truck_type"] = "Ryder Rental"
+    elif "nexgen" in text_lower:
+        data["truck_type"] = "Nexgen Rental"
+    else:
+        data["truck_type"] = "Finance"
 
     return data
 
@@ -168,5 +205,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Note: {e}")
         
-    print("Policy Pulse Fleet Bot is running error-free...")
+    print("Policy Pulse Fleet Bot is running with precise swap parsing...")
     bot.infinity_polling(skip_pending=True)
