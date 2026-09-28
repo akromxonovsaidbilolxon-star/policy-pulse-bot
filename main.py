@@ -71,6 +71,7 @@ def extract_truck_data(raw_text):
         "plate": "",
         "pickup_plate": "",
         "make": "",
+        "year": "",
         "event_date": datetime.now().strftime("%Y-%m-%d"),
         "location": "Rolling"
     }
@@ -147,9 +148,14 @@ def extract_truck_data(raw_text):
     elif len(plates) == 1:
         data["plate"] = plates[0]
         
+    # Extract Make & Year
     make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if make_match:
-        data["make"] = make_match.group(1).strip()
+        make_val = make_match.group(1).strip()
+        data["make"] = make_val
+        year_match = re.search(r'(20[0-9]{2})', make_val)
+        if year_match:
+            data["year"] = year_match.group(1)
 
     return data
 
