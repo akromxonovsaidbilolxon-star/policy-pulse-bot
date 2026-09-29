@@ -12,6 +12,9 @@ from collections import defaultdict
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GOOGLE_SCRIPT_URL = os.environ.get("GOOGLE_SCRIPT_URL", "").strip()
 
+if not TOKEN:
+    print("Error: Missing TELEGRAM_BOT_TOKEN in environment variables.")
+
 bot = telebot.TeleBot(TOKEN)
 
 message_buffers = defaultdict(list)
@@ -20,8 +23,12 @@ buffer_lock = threading.Lock()
 
 # Unified handler to process incoming text from either private chats, groups, or channels
 def handle_incoming_content(message_or_post):
-    chat_id = message_or_post.chat.id
-    text = message_or_post.text or message_or_post.caption or ""
+    try:
+        chat_id = message_or_post.chat.id
+    except AttributeError:
+        return
+        
+    text = getattr(message_or_post, 'text', None) or getattr(message_or_post, 'caption', None) or ""
     if not text:
         return
     
@@ -62,10 +69,12 @@ def process_accumulated_messages(chat_id):
 
     if GOOGLE_SCRIPT_URL:
         try:
-            response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data)
+            response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=15)
             print(f"Ledger response: {response.text}")
         except Exception as e:
             print(f"Error posting to Google Sheets: {e}")
+    else:
+        print("Warning: GOOGLE_SCRIPT_URL is not set. Data processed locally only.")
 
 def extract_truck_data(raw_text):
     data = {
@@ -121,8 +130,8 @@ def extract_truck_data(raw_text):
     if company_match:
         data["company"] = company_match.group(1).strip()
         
-    # Date extraction
-    date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})', raw_text, re.IGNORECASE)
+    # Date extraction (Supports MM/DD/YYYY or YYYY-MM-DD)
+    date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', raw_text, re.IGNORECASE)
     if date_match:
         data["event_date"] = date_match.group(1).strip()
         
