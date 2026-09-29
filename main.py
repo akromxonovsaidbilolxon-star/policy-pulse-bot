@@ -37,7 +37,7 @@ def handle_incoming_content(message_or_post):
 def handle_incoming_report(message):
     handle_incoming_content(message)
 
-# 2. Handler for channel posts (Added to listen to channels)
+# 2. Handler for channel posts (Listens to Telegram channels)
 @bot.channel_post_handler(func=lambda post: True)
 def handle_channel_posts(post):
     handle_incoming_content(post)
@@ -138,50 +138,48 @@ def extract_truck_data(raw_text):
         if alt_name:
             data["driver_name"] = alt_name.group(1).strip()
 
-    # Check if it's a SWAP or has a split section
+    # Split Drop vs Pickup sections if it's a SWAP or contains split keywords
     if "Pick up unit" in raw_text or data["action_type"] == "SWAP":
         parts = re.split(r'Pick up unit', raw_text, flags=re.IGNORECASE)
         drop_section = parts[0]
         pickup_section = parts[1] if len(parts) > 1 else ""
 
-        # Drop Unit details
         drop_unit_match = re.search(r'(?:Drop off unit|Drop unit|Unit)[:\s#]*([0-9]+)', drop_section, re.IGNORECASE)
         if drop_unit_match:
             data["unit_number"] = drop_unit_match.group(1).strip()
 
-        drop_vin = re.search(r'Vin:\s*([A-Z0-9]+)', drop_section, re.IGNORECASE)
+        drop_vin = re.search(r'[Vv]in:\s*([A-Z0-9]+)', drop_section, re.IGNORECASE)
         if drop_vin:
             data["vin"] = drop_vin.group(1).strip()
-        drop_plate = re.search(r'Plate:\s*([A-Z0-9]+)', drop_section, re.IGNORECASE)
+        drop_plate = re.search(r'[Pp]late:\s*([A-Z0-9]+)', drop_section, re.IGNORECASE)
         if drop_plate:
             data["plate"] = drop_plate.group(1).strip()
 
-        # Pickup Unit details from second section
         if pickup_section:
             pick_unit_match = re.search(r'[:\s#]*([0-9]+)', pickup_section)
             if pick_unit_match:
                 data["pickup_unit"] = pick_unit_match.group(1).strip()
 
-            pick_vin = re.search(r'Vin:\s*([A-Z0-9]+)', pickup_section, re.IGNORECASE)
+            pick_vin = re.search(r'[Vv]in:\s*([A-Z0-9]+)', pickup_section, re.IGNORECASE)
             if pick_vin:
                 data["pickup_vin"] = pick_vin.group(1).strip()
                 
-            pick_plate = re.search(r'Plate:\s*([A-Z0-9]+)', pickup_section, re.IGNORECASE)
+            pick_plate = re.search(r'[Pp]late:\s*([A-Z0-9]+)', pickup_section, re.IGNORECASE)
             if pick_plate:
                 data["pickup_plate"] = pick_plate.group(1).strip()
     else:
-        # Pure PICKUP or DROPOFF message without split sections
+        # Pure PICKUP or DROPOFF message handler
         unit_match = re.search(r'(?:Pick up unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
         if unit_match:
             data["pickup_unit"] = unit_match.group(1).strip()
             data["unit_number"] = unit_match.group(1).strip()
 
-        vin_match = re.search(r'Vin:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+        vin_match = re.search(r'[Vv]in:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
         if vin_match:
             data["pickup_vin"] = vin_match.group(1).strip()
             data["vin"] = vin_match.group(1).strip()
 
-        plate_match = re.search(r'Plate:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+        plate_match = re.search(r'[Pp]late:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
         if plate_match:
             data["pickup_plate"] = plate_match.group(1).strip()
             data["plate"] = plate_match.group(1).strip()
