@@ -18,10 +18,10 @@ message_buffers = defaultdict(list)
 timers = {}
 buffer_lock = threading.Lock()
 
-@bot.message_handler(func=lambda message: True)
-def handle_incoming_report(message):
-    chat_id = message.chat.id
-    text = message.text or message.caption or ""
+# Unified handler to process incoming text from either private chats, groups, or channels
+def handle_incoming_content(message_or_post):
+    chat_id = message_or_post.chat.id
+    text = message_or_post.text or message_or_post.caption or ""
     if not text:
         return
     
@@ -31,6 +31,16 @@ def handle_incoming_report(message):
             timers[chat_id].cancel()
         timers[chat_id] = threading.Timer(4.0, process_accumulated_messages, args=[chat_id])
         timers[chat_id].start()
+
+# 1. Handler for regular messages (Private chats and groups)
+@bot.message_handler(func=lambda message: True)
+def handle_incoming_report(message):
+    handle_incoming_content(message)
+
+# 2. Handler for channel posts (Added to listen to channels)
+@bot.channel_post_handler(func=lambda post: True)
+def handle_channel_posts(post):
+    handle_incoming_content(post)
 
 def process_accumulated_messages(chat_id):
     with buffer_lock:
@@ -188,4 +198,4 @@ if __name__ == "__main__":
         print(f"Note: {e}")
         
     print("Policy Pulse Fleet Bot is running on Railway...")
-    bot.infinity_polling(skip_pending=True)
+    bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
