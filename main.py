@@ -1,3 +1,72 @@
+import os
+import telebot
+import requests
+import json
+import time
+import re
+import threading
+from datetime import datetime
+from collections import defaultdict
+
+# Railway environment variables
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+GOOGLE_SCRIPT_URL = os.environ.get("GOOGLE_SCRIPT_URL", "").strip()
+
+bot = telebot.TeleBot(TOKEN)
+
+message_buffers = defaultdict(list)
+timers = {}
+buffer_lock = threading.Lock()
+
+# Unified handler to process incoming text from either private chats, groups, or channels
+def handle_incoming_content(message_or_post):
+    chat_id = message_or_post.chat.id
+    text = message_or_post.text or message_or_post.caption or ""
+    if not text:
+        return
+    
+    with buffer_lock:
+        message_buffers[chat_id].append(text)
+        if chat_id in timers:
+            timers[chat_id].cancel()
+        timers[chat_id] = threading.Timer(4.0, process_accumulated_messages, args=[chat_id])
+        timers[chat_id].start()
+
+# 1. Handler for regular messages (Private chats and groups)
+@bot.message_handler(func=lambda message: True)
+def handle_incoming_report(message):
+    handle_incoming_content(message)
+
+# 2. Handler for channel posts (Added to listen to channels)
+@bot.channel_post_handler(func=lambda post: True)
+def handle_channel_posts(post):
+    handle_incoming_content(post)
+
+def process_accumulated_messages(chat_id):
+    with buffer_lock:
+        texts = message_buffers.pop(chat_id, [])
+        if chat_id in timers:
+            del timers[chat_id]
+            
+    if not texts:
+        return
+        
+    combined_text = "\n".join(texts)
+    print(f"=== PROCESSING BLOCK ({len(texts)} parts) ===")
+    
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    structured_data = extract_truck_data(combined_text)
+    structured_data["timestamp"] = timestamp
+    structured_data["raw_message"] = combined_text
+
+    if GOOGLE_SCRIPT_URL:
+        try:
+            response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data)
+            print(f"Ledger response: {response.text}")
+        except Exception as e:
+            print(f"Error posting to Google Sheets: {e}")
+
 def extract_truck_data(raw_text):
     data = {
         "company": "Borderlanders Inc",
@@ -138,3 +207,18 @@ def extract_truck_data(raw_text):
         data["truck_type"] = "Finance"
 
     return data
+
+if __name__ == "__main__":
+    print("Waiting for old instance to close...")
+    time.sleep(3)
+    print("Clearing webhooks...")
+    try:
+        bot.remove_webhook()
+    except Exception as e:
+        print(f"Note: {e}")
+        
+    print("Policy Pulse Fleet Bot is running on Railway...")
+    try:
+        bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
+    except Exception as e:
+        print(f"Polling crashed with error: {e}")
