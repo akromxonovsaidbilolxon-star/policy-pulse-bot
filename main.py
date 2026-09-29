@@ -78,7 +78,7 @@ def process_accumulated_messages(chat_id):
 
 def extract_truck_data(raw_text):
     data = {
-        "company": "Borderlanders Inc",
+        "company": "Cargoprime Corp",
         "action_type": "PICKUP",
         "driver_status": "Active",
         "driver_type": "Company driver",
@@ -130,7 +130,7 @@ def extract_truck_data(raw_text):
     if company_match:
         data["company"] = company_match.group(1).strip()
         
-    # Date extraction (Supports MM/DD/YYYY or YYYY-MM-DD)
+    # Date extraction
     date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', raw_text, re.IGNORECASE)
     if date_match:
         data["event_date"] = date_match.group(1).strip()
