@@ -100,11 +100,9 @@ def extract_truck_data(raw_text):
     text_upper = raw_text.upper()
     if "SWAP" in text_upper or "SWAPPED" in text_upper:
         data["action_type"] = "SWAP"
-    elif "TERMINAT" in text_upper:
-        data["action_type"] = "TERMINATION"
-        data["driver_status"] = "Terminated"
-    elif "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
+    elif "TERMINAT" in text_upper or "[DROPOFF]" in text_upper or "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
         data["action_type"] = "DROPOFF"
+        data["driver_status"] = "Terminated"
     elif "PICKUP" in text_upper or "PICK UP" in text_upper:
         data["action_type"] = "PICKUP"
         
@@ -178,7 +176,7 @@ def extract_truck_data(raw_text):
                 data["pickup_plate"] = pick_plate.group(1).strip()
     else:
         # Pure PICKUP or DROPOFF message handler
-        unit_match = re.search(r'(?:Pick up unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
+        unit_match = re.search(r'(?:Drop off unit|Drop unit|Pick up unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
         if unit_match:
             data["pickup_unit"] = unit_match.group(1).strip()
             data["unit_number"] = unit_match.group(1).strip()
