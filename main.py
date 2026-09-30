@@ -63,7 +63,7 @@ def process_accumulated_messages(chat_id):
 
     if GOOGLE_SCRIPT_URL:
         try:
-            response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=30)
+            response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=45)
             print(f"Ledger response: {response.text}")
         except Exception as e:
             print(f"Error posting to Google Sheets: {e}")
@@ -142,10 +142,17 @@ def extract_truck_data(raw_text):
     return data
 
 if __name__ == "__main__":
-    time.sleep(3)
+    print("Waiting 5 seconds to ensure old bot instance is dead...")
+    time.sleep(5)
     try:
         bot.remove_webhook()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Webhook note: {e}")
+        
     print("Policy Pulse Fleet Bot is running on Railway...")
-    bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"Polling error encountered: {e}. Restarting in 5 seconds...")
+            time.sleep(5)
