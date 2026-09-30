@@ -69,7 +69,8 @@ def process_accumulated_messages(chat_id):
 
         if GOOGLE_SCRIPT_URL:
             try:
-                response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=15)
+                # 45-second timeout to prevent Google Apps Script lag drops
+                response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=45)
                 print(f"Ledger response for block: {response.text}")
             except Exception as e:
                 print(f"Error posting to Google Sheets: {e}")
@@ -91,7 +92,7 @@ def extract_truck_data(raw_text):
         "year": "",
         "truck_type": "Nexgen Rental",
         "event_date": datetime.now().strftime("%Y-%m-%d"),
-        "location": "Shop"
+        "location": "Rolling"
     }
     
     text_upper = raw_text.upper()
