@@ -56,20 +56,26 @@ def process_accumulated_messages(chat_id):
     combined_text = "\n".join(texts)
     print(f"=== PROCESSING BLOCK ({len(texts)} parts) ===")
     
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    structured_data = extract_truck_data(combined_text)
-    structured_data["timestamp"] = timestamp
-    structured_data["raw_message"] = combined_text
+    # Split combined text if multiple reports (e.g., [DROPOFF] and [PICKUP]) were sent together
+    sub_blocks = re.split(r'(?=\[DROPOFF\]|\[PICKUP\]|\[SWAP\])', combined_text, flags=re.IGNORECASE)
+    sub_blocks = [b.strip() for b in sub_blocks if b.strip()]
+    if not sub_blocks:
+        sub_blocks = [combined_text]
 
-    if GOOGLE_SCRIPT_URL:
-        try:
-            response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=15)
-            print(f"Ledger response: {response.text}")
-        except Exception as e:
-            print(f"Error posting to Google Sheets: {e}")
-    else:
-        print("Warning: GOOGLE_SCRIPT_URL is not set.")
+    for block in sub_blocks:
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        structured_data = extract_truck_data(block)
+        structured_data["timestamp"] = timestamp
+        structured_data["raw_message"] = block
+
+        if GOOGLE_SCRIPT_URL:
+            try:
+                response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=15)
+                print(f"Ledger response for block: {response.text}")
+            except Exception as e:
+                print(f"Error posting to Google Sheets: {e}")
+        else:
+            print("Warning: GOOGLE_SCRIPT_URL is not set.")
 
 def extract_truck_data(raw_text):
     data = {
