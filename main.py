@@ -106,16 +106,17 @@ def extract_truck_data(raw_text):
     elif "PICKUP" in text_upper or "PICK UP" in text_upper:
         data["action_type"] = "PICKUP"
         
-    # Location mapping
-    if "YARD" in text_upper:
-        data["location"] = "Yard"
-    elif "SHOP" in text_upper or "REPAIR" in text_upper or "ISSUE" in text_upper or "PENSKE" in text_upper:
-        data["location"] = "Shop"
-    elif "RETURN" in text_upper:
+    # Smart Location Mapping
+    text_lower = raw_text.lower()
+    if "returned" in text_lower or "return" in text_lower:
         data["location"] = "Returned"
-    elif "HOME" in text_upper:
+    elif "yard" in text_lower:
+        data["location"] = "Yard"
+    elif "shop" in text_lower or "repair" in text_lower or "vanguard" in text_lower or "issue" in text_lower:
+        data["location"] = "Shop"
+    elif "home" in text_lower:
         data["location"] = "Home"
-    elif "VACATION" in text_upper or "LEAVE" in text_upper:
+    elif "vacation" in text_lower or "leave" in text_lower:
         data["location"] = "Vacation"
     else:
         if data["action_type"] in ["SWAP", "DROPOFF"]:
