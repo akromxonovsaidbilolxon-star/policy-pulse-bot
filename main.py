@@ -78,7 +78,7 @@ def process_accumulated_messages(chat_id):
 
 def extract_truck_data(raw_text):
     data = {
-        "company": "Cargoprime Corp",
+        "company": "Pars Transportation",
         "action_type": "PICKUP",
         "driver_status": "Active",
         "driver_type": "Company driver",
@@ -92,7 +92,7 @@ def extract_truck_data(raw_text):
         "pickup_plate": "",
         "make": "",
         "year": "",
-        "truck_type": "Penske Rental",
+        "truck_type": "Nexgen Rental",
         "event_date": datetime.now().strftime("%Y-%m-%d"),
         "location": "Shop"
     }
@@ -127,7 +127,11 @@ def extract_truck_data(raw_text):
     # Company name extraction
     company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if company_match:
-        data["company"] = company_match.group(1).strip()
+        comp_val = company_match.group(1).strip()
+        if comp_val.lower() == "pars":
+            data["company"] = "Pars Transportation"
+        else:
+            data["company"] = comp_val
         
     # Date extraction
     date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', raw_text, re.IGNORECASE)
@@ -210,7 +214,7 @@ def extract_truck_data(raw_text):
     elif "nexgen" in text_lower:
         data["truck_type"] = "Nexgen Rental"
     else:
-        data["truck_type"] = "Finance"
+        data["truck_type"] = "Nexgen Rental"
 
     return data
 
