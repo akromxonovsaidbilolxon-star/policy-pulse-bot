@@ -1,102 +1,172 @@
 import os
 import telebot
-from google import genai
-from google.genai import types
+import requests
+import json
+import time
+import re
+import threading
+import uuid
+from datetime import datetime
+from collections import defaultdict
 
-# 1. Load Environment Variables
-TELEGRAM_BOT_TOKEN = os.getenv("Telegram_Token")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+GOOGLE_SCRIPT_URL = os.environ.get("GOOGLE_SCRIPT_URL", "").strip()
 
-if not TELEGRAM_BOT_TOKEN or not GEMINI_API_KEY:
-    raise ValueError("Missing Telegram_Token or GEMINI_API_KEY in environment variables.")
+if not TOKEN:
+    print("Error: Missing TELEGRAM_BOT_TOKEN in environment variables.")
 
-# 2. Initialize Telegram Bot and Gemini Client
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-client = genai.Client(api_key=GEMINI_API_KEY)
+bot = telebot.TeleBot(TOKEN)
+message_buffers = defaultdict(list)
+timers = {}
+buffer_lock = threading.Lock()
 
-# System prompt defining what violations to check for
-VIOLATION_PROMPT = """
-You are an expert compliance and document auditor. Analyze the provided image, document, or text 
-for any compliance violations, discrepancies, policy breaches, or anomalies. 
-Provide a clear, concise report:
-1. **Status:** (Compliant / Violation Found / Needs Review)
-2. **Details:** Explain what was found.
-3. **Recommendation:** What action should be taken.
-"""
-
-@bot.message_handler(commands=['start', 'help'])
-def send_welcome(message):
-    bot.reply_to(
-        message, 
-        "Hello! Send me any document, photo, or image, and I will scan it for violations and send the results directly here."
-    )
-
-# Handle Photos
-@bot.message_handler(content_types=['photo'])
-def handle_photo(message):
+def handle_incoming_content(message_or_post):
     try:
-        bot.send_chat_action(message.chat.id, 'typing')
+        chat_id = message_or_post.chat.id
+    except AttributeError:
+        return
         
-        # Get the highest resolution photo
-        fileID = message.photo[-1].file_id
-        file_info = bot.get_file(fileID)
-        downloaded_file = bot.download_file(file_info.file_path)
-        
-        # Save temporarily
-        temp_path = "temp_image.jpg"
-        with open(temp_path, 'wb') as new_file:
-            new_file.write(downloaded_file)
-            
-        # Upload to Gemini File API and analyze
-        uploaded_file = client.files.upload(file=temp_path)
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[uploaded_file, VIOLATION_PROMPT]
-        )
-        
-        # Clean up local file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-            
-        # Send result back to the Telegram chat
-        bot.reply_to(message, response.text)
-        
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error processing image: {str(e)}")
+    text = getattr(message_or_post, 'text', None) or getattr(message_or_post, 'caption', None) or ""
+    if not text:
+        return
+    
+    with buffer_lock:
+        message_buffers[chat_id].append(text)
+        if chat_id in timers:
+            timers[chat_id].cancel()
+        timers[chat_id] = threading.Timer(4.0, process_accumulated_messages, args=[chat_id])
+        timers[chat_id].start()
 
-# Handle Documents (PDFs, Images as files, etc.)
-@bot.message_handler(content_types=['document'])
-def handle_document(message):
-    try:
-        bot.send_chat_action(message.chat.id, 'typing')
-        
-        file_info = bot.get_file(message.document.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        
-        file_name = message.document.file_name or "temp_doc"
-        temp_path = f"temp_{file_name}"
-        
-        with open(temp_path, 'wb') as new_file:
-            new_file.write(downloaded_file)
+@bot.message_handler(func=lambda message: True)
+def handle_incoming_report(message):
+    handle_incoming_content(message)
+
+@bot.channel_post_handler(func=lambda post: True)
+def handle_channel_posts(post):
+    handle_incoming_content(post)
+
+def process_accumulated_messages(chat_id):
+    with buffer_lock:
+        texts = message_buffers.pop(chat_id, [])
+        if chat_id in timers:
+            del timers[chat_id]
             
-        # Upload to Gemini File API and analyze
-        uploaded_file = client.files.upload(file=temp_path)
-        response = client.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=[uploaded_file, VIOLATION_PROMPT]
-        )
+    if not texts:
+        return
         
-        # Clean up local file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-            
-        # Send result back to the Telegram chat
-        bot.reply_to(message, response.text)
+    combined_text = "\n".join(texts)
+    print(f"=== PROCESSING BLOCK ({len(texts)} parts) ===")
+    
+    transaction_id = str(uuid.uuid4())
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    structured_data = extract_truck_data(combined_text)
+    structured_data["transaction_id"] = transaction_id
+    structured_data["timestamp"] = timestamp
+    structured_data["raw_message"] = combined_text
+
+    if GOOGLE_SCRIPT_URL:
+        try:
+            response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=45)
+            print(f"Ledger response: {response.text}")
+        except Exception as e:
+            print(f"Error posting to Google Sheets: {e}")
+    else:
+        print("Warning: GOOGLE_SCRIPT_URL is not set.")
+
+def extract_truck_data(raw_text):
+    data = {
+        "company": "Pars Transportation",
+        "action_type": "PICKUP",
+        "driver_status": "Active",
+        "driver_name": "",
+        "unit_number": "",
+        "pickup_unit": "",
+        "vin": "",
+        "pickup_vin": "",
+        "make": "",
+        "year": "",
+        "plate": "",
+        "truck_type": "Nexgen Rental",
+        "event_date": datetime.now().strftime("%Y-%m-%d"),
+        "location": "Rolling"
+    }
+    
+    text_upper = raw_text.upper()
+    if "SWAP" in text_upper:
+        data["action_type"] = "SWAP"
+    elif "TERMINAT" in text_upper or "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
+        data["action_type"] = "DROPOFF"
+        data["driver_status"] = "Terminated"
+    else:
+        data["action_type"] = "PICKUP"
         
-    except Exception as e:
-        bot.reply_to(message, f"❌ Error processing document: {str(e)}")
+    # Extract location (grab full text or fallback)
+    loc_match = re.search(r'Location:\s*([^\n]+)', raw_text, re.IGNORECASE)
+    if loc_match:
+        data["location"] = loc_match.group(1).strip()
+    else:
+        text_lower = raw_text.lower()
+        if "returned" in text_lower or "return" in text_lower:
+            data["location"] = "Returned"
+        elif "yard" in text_lower:
+            data["location"] = "Yard"
+        elif "shop" in text_lower or "repair" in text_lower or "issue" in text_lower:
+            data["location"] = "Shop"
+        elif "home" in text_lower:
+            data["location"] = "Home"
+        else:
+            data["location"] = "Rolling"
+
+    company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
+    if company_match:
+        comp_val = company_match.group(1).strip()
+        data["company"] = "Successor Inc" if "successor" in comp_val.lower() else comp_val
+        
+    date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', raw_text, re.IGNORECASE)
+    if date_match:
+        data["event_date"] = date_match.group(1).strip()
+        
+    driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
+    if driver_match:
+        data["driver_name"] = driver_match.group(1).strip()
+
+    unit_match = re.search(r'(?:Drop off unit|Drop unit|Pick up unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
+    if unit_match:
+        data["pickup_unit"] = unit_match.group(1).strip()
+        data["unit_number"] = unit_match.group(1).strip()
+
+    vin_match = re.search(r'[Vv]in:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+    if vin_match:
+        data["pickup_vin"] = vin_match.group(1).strip()
+        data["vin"] = vin_match.group(1).strip()
+
+    plate_match = re.search(r'Plate:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+    if plate_match:
+        data["plate"] = plate_match.group(1).strip()
+
+    make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
+    if make_match:
+        make_val = make_match.group(1).strip()
+        data["make"] = make_val
+        year_match = re.search(r'(20[0-9]{2})', make_val)
+        if year_match:
+            data["year"] = year_match.group(1)
+
+    return data
 
 if __name__ == "__main__":
-    print("Bot is starting and polling for messages...")
-    # Start polling so it listens continuously for incoming messages in Telegram
-    bot.infinity_polling()
+    print("Waiting 8 seconds to ensure old bot instance is dead...")
+    time.sleep(8)
+    try:
+        bot.remove_webhook()
+    except Exception as e:
+        print(f"Webhook note: {e}")
+        
+    print("Policy Pulse Fleet Bot is running on Railway...")
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"Polling error encountered: {e}. Restarting in 5 seconds...")
+            time.sleep(5)
