@@ -5,6 +5,7 @@ import json
 import time
 import re
 import threading
+import uuid
 from datetime import datetime
 from collections import defaultdict
 
@@ -56,34 +57,48 @@ def process_accumulated_messages(chat_id):
     combined_text = "\n".join(texts)
     print(f"=== PROCESSING BLOCK ({len(texts)} parts) ===")
     
+    transaction_id = str(uuid.uuid4())
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     structured_data = extract_truck_data(combined_text)
+    structured_data["transaction_id"] = transaction_id
     structured_data["timestamp"] = timestamp
     structured_data["raw_message"] = combined_text
 
     if GOOGLE_SCRIPT_URL:
         try:
             response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=45)
-            print(f"Ledger response: {response.text}")
+            print(f"Ledger response [{transaction_id}]: {response.text}")
+            
+            # Response verification & Telegram confirmation
+            try:
+                res_json = response.json()
+                if res_json.get("status") == "success":
+                    bot.send_message(chat_id, f"✅ Fleet record successfully updated! (Tx: {transaction_id[:8]})")
+                else:
+                    bot.send_message(chat_id, f"⚠️ Processed with warnings: {res_json.get('message', 'No match found')}")
+            except Exception:
+                pass
+
         except Exception as e:
             print(f"Error posting to Google Sheets: {e}")
+            bot.send_message(chat_id, f"❌ Error communicating with Google Sheets ledger.")
     else:
         print("Warning: GOOGLE_SCRIPT_URL is not set.")
 
 def extract_truck_data(raw_text):
     data = {
-        "company": "Pars Transportation",
+        "company": "",
         "action_type": "PICKUP",
         "driver_status": "Active",
-        "driver_type": "Company driver",
         "driver_name": "",
-        "unit_number": "",     # Drop unit
-        "pickup_unit": "",     # Pick up unit
+        "unit_number": "",     # Drop Unit
+        "pickup_unit": "",     # Pickup Unit
         "vin": "",             # Drop VIN
-        "pickup_vin": "",      # Pick up VIN
+        "pickup_vin": "",      # Pickup VIN
         "make": "",
         "year": "",
-        "truck_type": "Nexgen Rental",
+        "truck_type": "",
         "event_date": datetime.now().strftime("%Y-%m-%d"),
         "location": "Rolling"
     }
@@ -109,7 +124,7 @@ def extract_truck_data(raw_text):
     else:
         data["location"] = "Shop" if data["action_type"] in ["SWAP", "DROPOFF"] else "Rolling"
 
-    # Company name
+    # Company identification (No unsafe default)
     company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if company_match:
         data["company"] = company_match.group(1).strip()
@@ -124,13 +139,12 @@ def extract_truck_data(raw_text):
     if driver_match:
         data["driver_name"] = driver_match.group(1).strip()
 
-    # Specialized parsing for SWAP messages (splitting Drop vs Pick up sections)
+    # Advanced SWAP & multi-unit parsing
     if "Pick up unit" in raw_text or data["action_type"] == "SWAP":
         parts = re.split(r'Pick up unit', raw_text, flags=re.IGNORECASE)
         drop_section = parts[0]
         pickup_section = parts[1] if len(parts) > 1 else ""
 
-        # Drop unit info
         drop_unit_match = re.search(r'(?:Drop unit|Drop off unit|Unit)[:\s#]*([0-9]+)', drop_section, re.IGNORECASE)
         if drop_unit_match:
             data["unit_number"] = drop_unit_match.group(1).strip()
@@ -139,7 +153,6 @@ def extract_truck_data(raw_text):
         if drop_vin:
             data["vin"] = drop_vin.group(1).strip()
 
-        # Pickup unit info
         if pickup_section:
             pick_unit_match = re.search(r'[:\s#]*([0-9]+)', pickup_section)
             if pick_unit_match:
@@ -149,7 +162,6 @@ def extract_truck_data(raw_text):
             if pick_vin:
                 data["pickup_vin"] = pick_vin.group(1).strip()
     else:
-        # Standard Single Action parsing
         unit_match = re.search(r'(?:Drop off unit|Drop unit|Pick up unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
         if unit_match:
             data["pickup_unit"] = unit_match.group(1).strip()
@@ -168,6 +180,19 @@ def extract_truck_data(raw_text):
         year_match = re.search(r'(20[0-9]{2})', make_val)
         if year_match:
             data["year"] = year_match.group(1)
+
+    # Truck Type identification
+    text_lower = raw_text.lower()
+    if "penske" in text_lower:
+        data["truck_type"] = "Penske Rental"
+    elif "ryder" in text_lower:
+        data["truck_type"] = "Ryder Rental"
+    elif "nexgen" in text_lower:
+        data["truck_type"] = "Nexgen Rental"
+    elif "owner" in text_lower:
+        data["truck_type"] = "Owner Operator"
+    else:
+        data["truck_type"] = "Nexgen Rental"
 
     return data
 
