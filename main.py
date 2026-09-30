@@ -133,7 +133,7 @@ def extract_truck_data(raw_text):
         data["pickup_unit"] = unit_match.group(1).strip()
         data["unit_number"] = unit_match.group(1).strip()
 
-    vin_match = re.search(r'[Vv]in:\s*([A-Z0-9]+)', raw_text, raw_text if 'raw_text' in locals() else re.IGNORECASE)
+    vin_match = re.search(r'[Vv]in:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
     if vin_match:
         data["pickup_vin"] = vin_match.group(1).strip()
         data["vin"] = vin_match.group(1).strip()
