@@ -5,6 +5,7 @@ import json
 import time
 import re
 import threading
+import uuid
 from datetime import datetime
 from collections import defaultdict
 
@@ -56,8 +57,11 @@ def process_accumulated_messages(chat_id):
     combined_text = "\n".join(texts)
     print(f"=== PROCESSING BLOCK ({len(texts)} parts) ===")
     
+    transaction_id = str(uuid.uuid4())
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
     structured_data = extract_truck_data(combined_text)
+    structured_data["transaction_id"] = transaction_id
     structured_data["timestamp"] = timestamp
     structured_data["raw_message"] = combined_text
 
@@ -75,7 +79,6 @@ def extract_truck_data(raw_text):
         "company": "Pars Transportation",
         "action_type": "PICKUP",
         "driver_status": "Active",
-        "driver_type": "Company driver",
         "driver_name": "",
         "unit_number": "",
         "pickup_unit": "",
@@ -83,9 +86,10 @@ def extract_truck_data(raw_text):
         "pickup_vin": "",
         "make": "",
         "year": "",
+        "plate": "",
         "truck_type": "Nexgen Rental",
         "event_date": datetime.now().strftime("%Y-%m-%d"),
-        "location": "Shop"
+        "location": "Rolling"
     }
     
     text_upper = raw_text.upper()
@@ -97,21 +101,27 @@ def extract_truck_data(raw_text):
     else:
         data["action_type"] = "PICKUP"
         
-    text_lower = raw_text.lower()
-    if "returned" in text_lower or "return" in text_lower:
-        data["location"] = "Returned"
-    elif "yard" in text_lower:
-        data["location"] = "Yard"
-    elif "shop" in text_lower or "repair" in text_lower or "issue" in text_lower:
-        data["location"] = "Shop"
-    elif "home" in text_lower:
-        data["location"] = "Home"
+    # Extract location (grab full text or fallback)
+    loc_match = re.search(r'Location:\s*([^\n]+)', raw_text, re.IGNORECASE)
+    if loc_match:
+        data["location"] = loc_match.group(1).strip()
     else:
-        data["location"] = "Shop" if data["action_type"] in ["SWAP", "DROPOFF"] else "Rolling"
+        text_lower = raw_text.lower()
+        if "returned" in text_lower or "return" in text_lower:
+            data["location"] = "Returned"
+        elif "yard" in text_lower:
+            data["location"] = "Yard"
+        elif "shop" in text_lower or "repair" in text_lower or "issue" in text_lower:
+            data["location"] = "Shop"
+        elif "home" in text_lower:
+            data["location"] = "Home"
+        else:
+            data["location"] = "Rolling"
 
     company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if company_match:
-        data["company"] = company_match.group(1).strip()
+        comp_val = company_match.group(1).strip()
+        data["company"] = "Successor Inc" if "successor" in comp_val.lower() else comp_val
         
     date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', raw_text, re.IGNORECASE)
     if date_match:
@@ -131,6 +141,10 @@ def extract_truck_data(raw_text):
         data["pickup_vin"] = vin_match.group(1).strip()
         data["vin"] = vin_match.group(1).strip()
 
+    plate_match = re.search(r'Plate:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+    if plate_match:
+        data["plate"] = plate_match.group(1).strip()
+
     make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if make_match:
         make_val = make_match.group(1).strip()
@@ -142,8 +156,8 @@ def extract_truck_data(raw_text):
     return data
 
 if __name__ == "__main__":
-    print("Waiting 5 seconds to ensure old bot instance is dead...")
-    time.sleep(5)
+    print("Waiting 8 seconds to ensure old bot instance is dead...")
+    time.sleep(8)
     try:
         bot.remove_webhook()
     except Exception as e:
