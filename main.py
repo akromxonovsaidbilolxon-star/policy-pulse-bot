@@ -56,7 +56,6 @@ def process_accumulated_messages(chat_id):
     combined_text = "\n".join(texts)
     print(f"=== PROCESSING BLOCK ({len(texts)} parts) ===")
     
-    # Split combined text if multiple reports (e.g., [DROPOFF] and [PICKUP]) were sent together
     sub_blocks = re.split(r'(?=\[DROPOFF\]|\[PICKUP\]|\[SWAP\])', combined_text, flags=re.IGNORECASE)
     sub_blocks = [b.strip() for b in sub_blocks if b.strip()]
     if not sub_blocks:
@@ -119,7 +118,7 @@ def extract_truck_data(raw_text):
     company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if company_match:
         comp_val = company_match.group(1).strip()
-        data["company"] = "Pars Transportation" if comp_val.lower() == "pars" else comp_val
+        data["company"] = comp_val
         
     date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', raw_text, re.IGNORECASE)
     if date_match:
