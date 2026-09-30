@@ -56,26 +56,19 @@ def process_accumulated_messages(chat_id):
     combined_text = "\n".join(texts)
     print(f"=== PROCESSING BLOCK ({len(texts)} parts) ===")
     
-    sub_blocks = re.split(r'(?=\[DROPOFF\]|\[PICKUP\]|\[SWAP\])', combined_text, flags=re.IGNORECASE)
-    sub_blocks = [b.strip() for b in sub_blocks if b.strip()]
-    if not sub_blocks:
-        sub_blocks = [combined_text]
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    structured_data = extract_truck_data(combined_text)
+    structured_data["timestamp"] = timestamp
+    structured_data["raw_message"] = combined_text
 
-    for block in sub_blocks:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        structured_data = extract_truck_data(block)
-        structured_data["timestamp"] = timestamp
-        structured_data["raw_message"] = block
-
-        if GOOGLE_SCRIPT_URL:
-            try:
-                # 45-second timeout to prevent Google Apps Script lag drops
-                response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=45)
-                print(f"Ledger response for block: {response.text}")
-            except Exception as e:
-                print(f"Error posting to Google Sheets: {e}")
-        else:
-            print("Warning: GOOGLE_SCRIPT_URL is not set.")
+    if GOOGLE_SCRIPT_URL:
+        try:
+            response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=45)
+            print(f"Ledger response: {response.text}")
+        except Exception as e:
+            print(f"Error posting to Google Sheets: {e}")
+    else:
+        print("Warning: GOOGLE_SCRIPT_URL is not set.")
 
 def extract_truck_data(raw_text):
     data = {
@@ -84,10 +77,10 @@ def extract_truck_data(raw_text):
         "driver_status": "Active",
         "driver_type": "Company driver",
         "driver_name": "",
-        "unit_number": "",
-        "pickup_unit": "",
-        "vin": "",
-        "pickup_vin": "",
+        "unit_number": "",     # Drop unit
+        "pickup_unit": "",     # Pick up unit
+        "vin": "",             # Drop VIN
+        "pickup_vin": "",      # Pick up VIN
         "make": "",
         "year": "",
         "truck_type": "Nexgen Rental",
@@ -116,29 +109,58 @@ def extract_truck_data(raw_text):
     else:
         data["location"] = "Shop" if data["action_type"] in ["SWAP", "DROPOFF"] else "Rolling"
 
+    # Company name
     company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if company_match:
-        comp_val = company_match.group(1).strip()
-        data["company"] = comp_val
+        data["company"] = company_match.group(1).strip()
         
+    # Date
     date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', raw_text, re.IGNORECASE)
     if date_match:
         data["event_date"] = date_match.group(1).strip()
         
+    # Driver name
     driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if driver_match:
         data["driver_name"] = driver_match.group(1).strip()
 
-    unit_match = re.search(r'(?:Drop off unit|Drop unit|Pick up unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
-    if unit_match:
-        data["pickup_unit"] = unit_match.group(1).strip()
-        data["unit_number"] = unit_match.group(1).strip()
+    # Specialized parsing for SWAP messages (splitting Drop vs Pick up sections)
+    if "Pick up unit" in raw_text or data["action_type"] == "SWAP":
+        parts = re.split(r'Pick up unit', raw_text, flags=re.IGNORECASE)
+        drop_section = parts[0]
+        pickup_section = parts[1] if len(parts) > 1 else ""
 
-    vin_match = re.search(r'[Vv]in:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
-    if vin_match:
-        data["pickup_vin"] = vin_match.group(1).strip()
-        data["vin"] = vin_match.group(1).strip()
+        # Drop unit info
+        drop_unit_match = re.search(r'(?:Drop unit|Drop off unit|Unit)[:\s#]*([0-9]+)', drop_section, re.IGNORECASE)
+        if drop_unit_match:
+            data["unit_number"] = drop_unit_match.group(1).strip()
 
+        drop_vin = re.search(r'[Vv]in:\s*([A-Z0-9]+)', drop_section, re.IGNORECASE)
+        if drop_vin:
+            data["vin"] = drop_vin.group(1).strip()
+
+        # Pickup unit info
+        if pickup_section:
+            pick_unit_match = re.search(r'[:\s#]*([0-9]+)', pickup_section)
+            if pick_unit_match:
+                data["pickup_unit"] = pick_unit_match.group(1).strip()
+
+            pick_vin = re.search(r'[Vv]in:\s*([A-Z0-9]+)', pickup_section, re.IGNORECASE)
+            if pick_vin:
+                data["pickup_vin"] = pick_vin.group(1).strip()
+    else:
+        # Standard Single Action parsing
+        unit_match = re.search(r'(?:Drop off unit|Drop unit|Pick up unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
+        if unit_match:
+            data["pickup_unit"] = unit_match.group(1).strip()
+            data["unit_number"] = unit_match.group(1).strip()
+
+        vin_match = re.search(r'[Vv]in:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+        if vin_match:
+            data["pickup_vin"] = vin_match.group(1).strip()
+            data["vin"] = vin_match.group(1).strip()
+
+    # Make, Model, Year
     make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if make_match:
         make_val = make_match.group(1).strip()
