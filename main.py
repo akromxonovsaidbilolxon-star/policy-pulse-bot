@@ -133,7 +133,7 @@ def extract_truck_data(raw_text):
         data["pickup_unit"] = unit_match.group(1).strip()
         data["unit_number"] = unit_match.group(1).strip()
 
-    vin_match = re.search(r'[Vv]in:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+    vin_match = re.search(r'[Vv]in:\s*([A-Z0-9]+)', raw_text, raw_text if 'raw_text' in locals() else re.IGNORECASE)
     if vin_match:
         data["pickup_vin"] = vin_match.group(1).strip()
         data["vin"] = vin_match.group(1).strip()
@@ -149,10 +149,17 @@ def extract_truck_data(raw_text):
     return data
 
 if __name__ == "__main__":
-    time.sleep(3)
+    print("Waiting 5 seconds to ensure old bot instance is dead...")
+    time.sleep(5)
     try:
         bot.remove_webhook()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Webhook note: {e}")
+        
     print("Policy Pulse Fleet Bot is running on Railway...")
-    bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
+    while True:
+        try:
+            bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
+        except Exception as e:
+            print(f"Polling error encountered: {e}. Restarting in 5 seconds...")
+            time.sleep(5)
