@@ -98,12 +98,12 @@ def extract_truck_data(raw_text):
     }
     
     text_upper = raw_text.upper()
-    if "SWAP" in text_upper or "SWAPPED" in text_upper:
+    if "SWAP" in text_upper:
         data["action_type"] = "SWAP"
-    elif "TERMINAT" in text_upper or "[DROPOFF]" in text_upper or "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
+    elif "TERMINAT" in text_upper or "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
         data["action_type"] = "DROPOFF"
         data["driver_status"] = "Terminated"
-    elif "PICKUP" in text_upper or "PICK UP" in text_upper:
+    else:
         data["action_type"] = "PICKUP"
         
     # Smart Location Mapping
