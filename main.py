@@ -5,7 +5,6 @@ import json
 import time
 import re
 import threading
-import uuid
 from datetime import datetime
 from collections import defaultdict
 
@@ -57,50 +56,36 @@ def process_accumulated_messages(chat_id):
     combined_text = "\n".join(texts)
     print(f"=== PROCESSING BLOCK ({len(texts)} parts) ===")
     
-    transaction_id = str(uuid.uuid4())
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
     structured_data = extract_truck_data(combined_text)
-    structured_data["transaction_id"] = transaction_id
     structured_data["timestamp"] = timestamp
     structured_data["raw_message"] = combined_text
 
     if GOOGLE_SCRIPT_URL:
         try:
-            response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=45)
-            print(f"Ledger response [{transaction_id}]: {response.text}")
-            
-            # Response verification & Telegram confirmation
-            try:
-                res_json = response.json()
-                if res_json.get("status") == "success":
-                    bot.send_message(chat_id, f"✅ Fleet record successfully updated! (Tx: {transaction_id[:8]})")
-                else:
-                    bot.send_message(chat_id, f"⚠️ Processed with warnings: {res_json.get('message', 'No match found')}")
-            except Exception:
-                pass
-
+            response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=30)
+            print(f"Ledger response: {response.text}")
         except Exception as e:
             print(f"Error posting to Google Sheets: {e}")
-            bot.send_message(chat_id, f"❌ Error communicating with Google Sheets ledger.")
     else:
         print("Warning: GOOGLE_SCRIPT_URL is not set.")
 
 def extract_truck_data(raw_text):
     data = {
-        "company": "",
+        "company": "Pars Transportation",
         "action_type": "PICKUP",
         "driver_status": "Active",
+        "driver_type": "Company driver",
         "driver_name": "",
-        "unit_number": "",     # Drop Unit
-        "pickup_unit": "",     # Pickup Unit
-        "vin": "",             # Drop VIN
-        "pickup_vin": "",      # Pickup VIN
+        "unit_number": "",
+        "pickup_unit": "",
+        "vin": "",
+        "pickup_vin": "",
         "make": "",
         "year": "",
-        "truck_type": "",
+        "truck_type": "Nexgen Rental",
         "event_date": datetime.now().strftime("%Y-%m-%d"),
-        "location": "Rolling"
+        "location": "Shop"
     }
     
     text_upper = raw_text.upper()
@@ -124,55 +109,28 @@ def extract_truck_data(raw_text):
     else:
         data["location"] = "Shop" if data["action_type"] in ["SWAP", "DROPOFF"] else "Rolling"
 
-    # Company identification (No unsafe default)
     company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if company_match:
         data["company"] = company_match.group(1).strip()
         
-    # Date
     date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', raw_text, re.IGNORECASE)
     if date_match:
         data["event_date"] = date_match.group(1).strip()
         
-    # Driver name
     driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if driver_match:
         data["driver_name"] = driver_match.group(1).strip()
 
-    # Advanced SWAP & multi-unit parsing
-    if "Pick up unit" in raw_text or data["action_type"] == "SWAP":
-        parts = re.split(r'Pick up unit', raw_text, flags=re.IGNORECASE)
-        drop_section = parts[0]
-        pickup_section = parts[1] if len(parts) > 1 else ""
+    unit_match = re.search(r'(?:Drop off unit|Drop unit|Pick up unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
+    if unit_match:
+        data["pickup_unit"] = unit_match.group(1).strip()
+        data["unit_number"] = unit_match.group(1).strip()
 
-        drop_unit_match = re.search(r'(?:Drop unit|Drop off unit|Unit)[:\s#]*([0-9]+)', drop_section, re.IGNORECASE)
-        if drop_unit_match:
-            data["unit_number"] = drop_unit_match.group(1).strip()
+    vin_match = re.search(r'[Vv]in:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+    if vin_match:
+        data["pickup_vin"] = vin_match.group(1).strip()
+        data["vin"] = vin_match.group(1).strip()
 
-        drop_vin = re.search(r'[Vv]in:\s*([A-Z0-9]+)', drop_section, re.IGNORECASE)
-        if drop_vin:
-            data["vin"] = drop_vin.group(1).strip()
-
-        if pickup_section:
-            pick_unit_match = re.search(r'[:\s#]*([0-9]+)', pickup_section)
-            if pick_unit_match:
-                data["pickup_unit"] = pick_unit_match.group(1).strip()
-
-            pick_vin = re.search(r'[Vv]in:\s*([A-Z0-9]+)', pickup_section, re.IGNORECASE)
-            if pick_vin:
-                data["pickup_vin"] = pick_vin.group(1).strip()
-    else:
-        unit_match = re.search(r'(?:Drop off unit|Drop unit|Pick up unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
-        if unit_match:
-            data["pickup_unit"] = unit_match.group(1).strip()
-            data["unit_number"] = unit_match.group(1).strip()
-
-        vin_match = re.search(r'[Vv]in:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
-        if vin_match:
-            data["pickup_vin"] = vin_match.group(1).strip()
-            data["vin"] = vin_match.group(1).strip()
-
-    # Make, Model, Year
     make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if make_match:
         make_val = make_match.group(1).strip()
@@ -181,33 +139,13 @@ def extract_truck_data(raw_text):
         if year_match:
             data["year"] = year_match.group(1)
 
-    # Truck Type identification
-    text_lower = raw_text.lower()
-    if "penske" in text_lower:
-        data["truck_type"] = "Penske Rental"
-    elif "ryder" in text_lower:
-        data["truck_type"] = "Ryder Rental"
-    elif "nexgen" in text_lower:
-        data["truck_type"] = "Nexgen Rental"
-    elif "owner" in text_lower:
-        data["truck_type"] = "Owner Operator"
-    else:
-        data["truck_type"] = "Nexgen Rental"
-
     return data
 
 if __name__ == "__main__":
-    print("Waiting 5 seconds to ensure old bot instance is dead...")
-    time.sleep(5)
+    time.sleep(3)
     try:
         bot.remove_webhook()
-    except Exception as e:
-        print(f"Webhook note: {e}")
-        
+    except Exception:
+        pass
     print("Policy Pulse Fleet Bot is running on Railway...")
-    while True:
-        try:
-            bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
-        except Exception as e:
-            print(f"Polling error encountered: {e}. Restarting in 5 seconds...")
-            time.sleep(5)
+    bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
