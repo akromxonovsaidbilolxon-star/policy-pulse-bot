@@ -1,172 +1,156 @@
 import os
-import telebot
-import requests
-import json
-import time
 import re
-import threading
-import uuid
+import json
+import logging
+import requests
 from datetime import datetime
-from collections import defaultdict
+from telegram import Update
+from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
 
-TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-GOOGLE_SCRIPT_URL = os.environ.get("GOOGLE_SCRIPT_URL", "").strip()
+# Setup logging
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-if not TOKEN:
-    print("Error: Missing TELEGRAM_BOT_TOKEN in environment variables.")
+# Environment Variables
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Your Google Apps Script Web App URL
 
-bot = telebot.TeleBot(TOKEN)
-message_buffers = defaultdict(list)
-timers = {}
-buffer_lock = threading.Lock()
 
-def handle_incoming_content(message_or_post):
-    try:
-        chat_id = message_or_post.chat.id
-    except AttributeError:
-        return
-        
-    text = getattr(message_or_post, 'text', None) or getattr(message_or_post, 'caption', None) or ""
-    if not text:
-        return
-    
-    with buffer_lock:
-        message_buffers[chat_id].append(text)
-        if chat_id in timers:
-            timers[chat_id].cancel()
-        timers[chat_id] = threading.Timer(4.0, process_accumulated_messages, args=[chat_id])
-        timers[chat_id].start()
-
-@bot.message_handler(func=lambda message: True)
-def handle_incoming_report(message):
-    handle_incoming_content(message)
-
-@bot.channel_post_handler(func=lambda post: True)
-def handle_channel_posts(post):
-    handle_incoming_content(post)
-
-def process_accumulated_messages(chat_id):
-    with buffer_lock:
-        texts = message_buffers.pop(chat_id, [])
-        if chat_id in timers:
-            del timers[chat_id]
-            
-    if not texts:
-        return
-        
-    combined_text = "\n".join(texts)
-    print(f"=== PROCESSING BLOCK ({len(texts)} parts) ===")
-    
-    transaction_id = str(uuid.uuid4())
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    structured_data = extract_truck_data(combined_text)
-    structured_data["transaction_id"] = transaction_id
-    structured_data["timestamp"] = timestamp
-    structured_data["raw_message"] = combined_text
-
-    if GOOGLE_SCRIPT_URL:
-        try:
-            response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=45)
-            print(f"Ledger response: {response.text}")
-        except Exception as e:
-            print(f"Error posting to Google Sheets: {e}")
-    else:
-        print("Warning: GOOGLE_SCRIPT_URL is not set.")
-
-def extract_truck_data(raw_text):
+def parse_truck_message(text: str) -> dict:
+    """
+    Parses incoming dispatch/swap text messages for truck and driver details.
+    """
     data = {
-        "company": "Pars Transportation",
+        "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
+        "raw_message": text,
+        "company": "Borderlanders Inc",
         "action_type": "PICKUP",
-        "driver_status": "Active",
         "driver_name": "",
         "unit_number": "",
         "pickup_unit": "",
         "vin": "",
         "pickup_vin": "",
-        "make": "",
-        "year": "",
         "plate": "",
-        "truck_type": "Nexgen Rental",
-        "event_date": datetime.now().strftime("%Y-%m-%d"),
-        "location": "Rolling"
+        "pickup_plate": "",
+        "truck_type": "Penske Rental",
+        "location": "Shop"
     }
-    
-    text_upper = raw_text.upper()
-    if "SWAP" in text_upper:
-        data["action_type"] = "SWAP"
-    elif "TERMINAT" in text_upper or "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
-        data["action_type"] = "DROPOFF"
-        data["driver_status"] = "Terminated"
+
+    # Detect company mentions
+    if re.search(r"cargo\s*prime", text, re.IGNORECASE):
+        data["company"] = "Cargo Prime"
+    elif re.search(r"supreme", text, re.IGNORECASE):
+        data["company"] = "Supreme"
+    elif re.search(r"successor", text, re.IGNORECASE):
+        data["company"] = "Successor Inc"
+    elif re.search(r"borderlanders", text, re.IGNORECASE):
+        data["company"] = "Borderlanders Inc"
+
+    # Detect action: Drop, Termination, Swap, or Pickup
+    if re.search(r"\b(drop|dropped|termination|return|returned)\b", text, re.IGNORECASE):
+        data["action_type"] = "DROP"
     else:
         data["action_type"] = "PICKUP"
-        
-    # Extract location (grab full text or fallback)
-    loc_match = re.search(r'Location:\s*([^\n]+)', raw_text, re.IGNORECASE)
-    if loc_match:
-        data["location"] = loc_match.group(1).strip()
-    else:
-        text_lower = raw_text.lower()
-        if "returned" in text_lower or "return" in text_lower:
-            data["location"] = "Returned"
-        elif "yard" in text_lower:
-            data["location"] = "Yard"
-        elif "shop" in text_lower or "repair" in text_lower or "issue" in text_lower:
-            data["location"] = "Shop"
-        elif "home" in text_lower:
-            data["location"] = "Home"
-        else:
-            data["location"] = "Rolling"
 
-    company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
-    if company_match:
-        comp_val = company_match.group(1).strip()
-        data["company"] = "Successor Inc" if "successor" in comp_val.lower() else comp_val
-        
-    date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', raw_text, re.IGNORECASE)
-    if date_match:
-        data["event_date"] = date_match.group(1).strip()
-        
-    driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
+    # Extract Drivers (e.g., "Driver: John Doe / Jane Doe" or "Drivers - Name & Name")
+    driver_match = re.search(r"(?:driver|drivers)[\s\:\-]+([^\n\r]+)", text, re.IGNORECASE)
     if driver_match:
         data["driver_name"] = driver_match.group(1).strip()
 
-    unit_match = re.search(r'(?:Drop off unit|Drop unit|Pick up unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
-    if unit_match:
-        data["pickup_unit"] = unit_match.group(1).strip()
-        data["unit_number"] = unit_match.group(1).strip()
+    # Extract dropped / old unit number (e.g., "Drop unit: 27014" or "Dropped: 27014")
+    drop_match = re.search(r"(?:drop(?:ped)?(?:\s*unit)?|old(?:\s*unit)?|returning)[\s\:\#\-]*([0-9A-Za-z]+)", text, re.IGNORECASE)
+    if drop_match:
+        data["unit_number"] = drop_match.group(1).strip()
 
-    vin_match = re.search(r'[Vv]in:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
-    if vin_match:
-        data["pickup_vin"] = vin_match.group(1).strip()
-        data["vin"] = vin_match.group(1).strip()
+    # Extract pickup / new unit number (e.g., "Pickup unit: 27012" or "New unit: 27012")
+    pickup_match = re.search(r"(?:pickup(?:\s*unit)?|new(?:\s*unit)?|picking\s*up)[\s\:\#\-]*([0-9A-Za-z]+)", text, re.IGNORECASE)
+    if pickup_match:
+        data["pickup_unit"] = pickup_match.group(1).strip()
 
-    plate_match = re.search(r'Plate:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
-    if plate_match:
-        data["plate"] = plate_match.group(1).strip()
+    # Fallback: If no explicit pickup/drop keywords exist, extract standalone unit numbers
+    if not data["unit_number"] and not data["pickup_unit"]:
+        units = re.findall(r"\b(27\d{3}|\d{4,6})\b", text)
+        if len(units) == 1:
+            if data["action_type"] == "DROP":
+                data["unit_number"] = units[0]
+            else:
+                data["pickup_unit"] = units[0]
+        elif len(units) >= 2:
+            data["unit_number"] = units[0]
+            data["pickup_unit"] = units[1]
 
-    make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
-    if make_match:
-        make_val = make_match.group(1).strip()
-        data["make"] = make_val
-        year_match = re.search(r'(20[0-9]{2})', make_val)
-        if year_match:
-            data["year"] = year_match.group(1)
+    # Extract VIN (17 alphanumeric characters)
+    vins = re.findall(r"\b[A-HJ-NPR-Z0-9]{17}\b", text)
+    if len(vins) == 1:
+        data["vin"] = vins[0]
+    elif len(vins) >= 2:
+        data["vin"] = vins[0]
+        data["pickup_vin"] = vins[1]
+
+    # Extract License Plates (e.g., "Plate: ABC1234")
+    plates = re.findall(r"(?:plate|tag)[\s\:\#\-]*([A-Za-z0-9\-]+)", text, re.IGNORECASE)
+    if plates:
+        data["plate"] = plates[0].strip()
 
     return data
 
-if __name__ == "__main__":
-    print("Waiting 8 seconds to ensure old bot instance is dead...")
-    time.sleep(8)
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Listens for messages in Telegram, formats the data, and posts it to Google Apps Script.
+    """
+    if not update.message or not update.message.text:
+        return
+
+    text = update.message.text
+    logger.info(f"Incoming message: {text}")
+
+    # Parse payload
+    payload = parse_truck_message(text)
+
+    if not WEBHOOK_URL:
+        logger.error("WEBHOOK_URL is not configured in environment variables.")
+        await update.message.reply_text("Error: Google Apps Script Webhook URL is missing.")
+        return
+
     try:
-        bot.remove_webhook()
-    except Exception as e:
-        print(f"Webhook note: {e}")
+        # Send payload to Google Apps Script doPost endpoint
+        response = requests.post(
+            WEBHOOK_URL,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=15
+        )
+
+        logger.info(f"Apps Script Response: {response.status_code} - {response.text}")
         
-    print("Policy Pulse Fleet Bot is running on Railway...")
-    while True:
-        try:
-            bot.infinity_polling(skip_pending=True, timeout=60, long_polling_timeout=60)
-        except Exception as e:
-            print(f"Polling error encountered: {e}. Restarting in 5 seconds...")
-            time.sleep(5)
+        reply_msg = (
+            f"Logged to Sheets:\n"
+            f"• Action: {payload['action_type']}\n"
+            f"• Drop Unit: {payload['unit_number'] or 'None'}\n"
+            f"• Pickup Unit: {payload['pickup_unit'] or 'None'}\n"
+            f"• Drivers: {payload['driver_name'] or 'N/A'}"
+        )
+        await update.message.reply_text(reply_msg)
+
+    except Exception as e:
+        logger.error(f"Failed to post to Google Sheets: {e}")
+        await update.message.reply_text(f"Error syncing with Sheets: {str(e)}")
+
+
+def main():
+    if not TELEGRAM_BOT_TOKEN:
+        raise ValueError("TELEGRAM_BOT_TOKEN environment variable is not set!")
+
+    app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+
+    logger.info("Bot started and listening for messages...")
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
