@@ -105,12 +105,14 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
   text = message.text
 
+  # Ignore messages sent by other bots or self
   if message.from_user and message.from_user.is_bot:
     return
 
   try:
     parsed_event = extract_dispatch_info(text)
 
+    # Ignore casual chat messages
     if (
         not parsed_event.get("is_dispatch_related")
         or not parsed_event.get("unit_number")
@@ -119,7 +121,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logging.info(f"Processing dispatch message: {text}")
 
-    # Pass parsed data along with raw message text to maintain an audit trail
+    # Process sheet update and record audit log
     result = sheet_manager.process_event(parsed_event, raw_text=text)
     await message.reply_text(f"Processed & Audited via Gemini:\n{result}")
 
