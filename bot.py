@@ -18,7 +18,6 @@ logging.basicConfig(
 )
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TARGET_USERNAME = os.getenv("TARGET_USERNAME", "").lstrip("@").lower()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 WORKSHEET_NAME = os.getenv("WORKSHEET_NAME", "Sheet1")
@@ -43,14 +42,24 @@ class DriverItem(BaseModel):
 
 
 class DispatchEvent(BaseModel):
+  is_dispatch_related: bool = Field(
+      description=(
+          "Set to true if this message contains vehicle or driver assignments,"
+          " drops, pickups, or status changes. Set to false for regular chat,"
+          " greetings, or irrelevant talk."
+      )
+  )
   action: str = Field(
-      description="'pickup', 'drop', 'swap', 'returned', or 'transfer'"
+      default="",
+      description="'pickup', 'drop', 'swap', 'returned', or 'transfer'",
   )
   company_name: str = Field(
       default="", description="Name of company or carrier"
   )
-  unit_number: str = Field(description="Truck unit number")
-  effective_date: str = Field(description="Event date formatted as MM/DD/YYYY")
+  unit_number: str = Field(default="", description="Truck unit number")
+  effective_date: str = Field(
+      default="", description="Event date formatted as MM/DD/YYYY"
+  )
   location: str = Field(
       default="",
       description=(
@@ -65,11 +74,12 @@ class DispatchEvent(BaseModel):
 def extract_dispatch_info(text: str) -> dict:
   system_instruction = (
       "You are an insurance and fleet compliance extraction parser. "
-      "Extract details from logistics/dispatch messages into strict JSON"
-      " format. Identify driver names (and tag team1/team2 if team drivers are"
-      " present), unit numbers, effective dates (convert to MM/DD/YYYY),"
-      " company names, and locations (e.g., Rolling, Shop, Returned, Yard,"
-      " Vacation)."
+      "Analyze every message. First decide whether the text relates to fleet operations "
+      "(truck pickup, drop, driver change, swap, or unit location updates). "
+      "If it is not dispatch-related, set is_dispatch_related to false. "
+      "If it is relevant, set is_dispatch_related to true and extract driver names "
+      "(tag team1/team2 if team drivers are present), unit numbers, effective dates (MM/DD/YYYY), "
+      "company names, and locations (e.g., Rolling, Shop, Returned, Yard, Vacation)."
   )
 
   response = gemini_client.models.generate_content(
@@ -92,49 +102,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return
 
   text = message.text
-  bot_username = context.bot.username.lower() if context.bot.username else ""
-  is_tagged = False
 
-  # Check mention entities
-  if message.entities:
-    for ent in message.entities:
-      if ent.type == "mention":
-        mention = text[ent.offset : ent.offset + ent.length].lstrip("@").lower()
-        if mention in [TARGET_USERNAME, bot_username]:
-          is_tagged = True
-          break
-      elif ent.type == "text_mention" and ent.user and ent.user.username:
-        if ent.user.username.lower() in [TARGET_USERNAME, bot_username]:
-          is_tagged = True
-          break
-
-  # Check replies
-  if message.reply_to_message and message.reply_to_message.from_user:
-    replied_user = message.reply_to_message.from_user.username or ""
-    if replied_user.lower() in [TARGET_USERNAME, bot_username]:
-      is_tagged = True
-
-  if not is_tagged:
+  # Ignore messages sent by the bot itself to prevent infinite loops
+  if message.from_user and message.from_user.is_bot:
     return
-
-  logging.info(f"Tag detected: {text}")
 
   try:
     parsed_event = extract_dispatch_info(text)
-    logging.info(f"Extracted payload: {parsed_event}")
 
-    if not parsed_event.get("unit_number"):
-      await message.reply_text(
-          "Could not detect a valid unit number from this message."
-      )
+    # Skip regular conversation that contains no dispatch data
+    if (
+        not parsed_event.get("is_dispatch_related")
+        or not parsed_event.get("unit_number")
+    ):
       return
 
+    logging.info(f"Processing dispatch message: {text}")
+    logging.info(f"Parsed data: {parsed_event}")
+
+    # Update Google Sheets
     result = sheet_manager.process_event(parsed_event)
     await message.reply_text(f"Processed via Gemini:\n{result}")
 
   except Exception as e:
-    logging.error(f"Error handling update: {e}", exc_info=True)
-    await message.reply_text(f"Error updating sheet: {str(e)}")
+    logging.error(f"Error handling message: {e}", exc_info=True)
 
 
 def main():
@@ -142,7 +133,7 @@ def main():
   app.add_handler(
       MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
   )
-  print("Fleet Bot is active and listening...")
+  print("Fleet Bot is active and reading all group messages...")
   app.run_polling()
 
 
