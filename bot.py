@@ -1,14 +1,13 @@
 import json
 import logging
 import os
+import requests
 from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 from pydantic import BaseModel, Field
 from telegram import Update
 from telegram.ext import ApplicationBuilder, ContextTypes, MessageHandler, filters
-
-from sheet_engine import FleetSheetManager
 
 load_dotenv()
 
@@ -19,20 +18,9 @@ logging.basicConfig(
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
+APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL")  # Your Web App URL
 WORKSHEET_NAME = os.getenv("WORKSHEET_NAME", "Sheet1")
-AUDIT_WORKSHEET_NAME = os.getenv("AUDIT_WORKSHEET_NAME", "Audit Log")
-CREDS_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "credentials.json")
-CREDS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON", "")
 
-# Initialize Sheet Engine & Gemini Client
-sheet_manager = FleetSheetManager(
-    spreadsheet_id=SPREADSHEET_ID,
-    worksheet_name=WORKSHEET_NAME,
-    audit_worksheet_name=AUDIT_WORKSHEET_NAME,
-    creds_path=CREDS_PATH,
-    creds_json=CREDS_JSON,
-)
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 
@@ -105,14 +93,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
   text = message.text
 
-  # Ignore messages sent by other bots or self
   if message.from_user and message.from_user.is_bot:
     return
 
   try:
     parsed_event = extract_dispatch_info(text)
 
-    # Ignore casual chat messages
     if (
         not parsed_event.get("is_dispatch_related")
         or not parsed_event.get("unit_number")
@@ -121,9 +107,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logging.info(f"Processing dispatch message: {text}")
 
-    # Process sheet update and record audit log
-    result = sheet_manager.process_event(parsed_event, raw_text=text)
-    await message.reply_text(f"Processed & Audited via Gemini:\n{result}")
+    # Prepare payload for Google Apps Script Webhook
+    payload = parsed_event
+    payload["raw_text"] = text
+    payload["sheet_name"] = WORKSHEET_NAME
+
+    # Send POST request to Google Apps Script
+    headers = {"Content-Type": "application/json"}
+    resp = requests.post(
+        APPS_SCRIPT_URL, data=json.dumps(payload), headers=headers, timeout=30
+    )
+    res_data = resp.json()
+
+    if res_data.get("status") == "success":
+      await message.reply_text(f"Processed via Gemini:\n{res_data.get('message')}")
+    else:
+      await message.reply_text(f"Error from Sheet Script: {res_data.get('message')}")
 
   except Exception as e:
     logging.error(f"Error handling message: {e}", exc_info=True)
@@ -134,7 +133,7 @@ def main():
   app.add_handler(
       MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
   )
-  print("Fleet Bot with Audit Logging is active...")
+  print("Fleet Bot via Apps Script Webhook is active...")
   app.run_polling()
 
 
