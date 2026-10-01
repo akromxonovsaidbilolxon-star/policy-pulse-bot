@@ -21,6 +21,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 WORKSHEET_NAME = os.getenv("WORKSHEET_NAME", "Sheet1")
+AUDIT_WORKSHEET_NAME = os.getenv("AUDIT_WORKSHEET_NAME", "Audit Log")
 CREDS_PATH = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "credentials.json")
 CREDS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON", "")
 
@@ -28,6 +29,7 @@ CREDS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON", "")
 sheet_manager = FleetSheetManager(
     spreadsheet_id=SPREADSHEET_ID,
     worksheet_name=WORKSHEET_NAME,
+    audit_worksheet_name=AUDIT_WORKSHEET_NAME,
     creds_path=CREDS_PATH,
     creds_json=CREDS_JSON,
 )
@@ -103,14 +105,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
   text = message.text
 
-  # Ignore messages sent by the bot itself to prevent infinite loops
   if message.from_user and message.from_user.is_bot:
     return
 
   try:
     parsed_event = extract_dispatch_info(text)
 
-    # Skip regular conversation that contains no dispatch data
     if (
         not parsed_event.get("is_dispatch_related")
         or not parsed_event.get("unit_number")
@@ -118,11 +118,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
       return
 
     logging.info(f"Processing dispatch message: {text}")
-    logging.info(f"Parsed data: {parsed_event}")
 
-    # Update Google Sheets
-    result = sheet_manager.process_event(parsed_event)
-    await message.reply_text(f"Processed via Gemini:\n{result}")
+    # Pass parsed data along with raw message text to maintain an audit trail
+    result = sheet_manager.process_event(parsed_event, raw_text=text)
+    await message.reply_text(f"Processed & Audited via Gemini:\n{result}")
 
   except Exception as e:
     logging.error(f"Error handling message: {e}", exc_info=True)
@@ -133,7 +132,7 @@ def main():
   app.add_handler(
       MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message)
   )
-  print("Fleet Bot is active and reading all group messages...")
+  print("Fleet Bot with Audit Logging is active...")
   app.run_polling()
 
 
