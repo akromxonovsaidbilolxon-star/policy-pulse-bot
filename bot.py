@@ -18,10 +18,9 @@ logging.basicConfig(
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL")  # URL веб-приложения Google Apps Script
+APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL")
 WORKSHEET_NAME = os.getenv("WORKSHEET_NAME", "Sheet1")
 
-# Инициализация клиента Gemini
 gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 
@@ -73,9 +72,8 @@ def extract_dispatch_info(text: str) -> dict:
       "company names, and locations (e.g., Rolling, Shop, Returned, Yard, Vacation)."
   )
 
-  # Используем актуальную модель gemini-2.0-flash
   response = gemini_client.models.generate_content(
-      model="gemini-2.0-flash",
+      model="gemini-3.8-flash",
       contents=text,
       config=types.GenerateContentConfig(
           system_instruction=system_instruction,
@@ -95,14 +93,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
   text = message.text
 
-  # Игнорируем сообщения от ботов, чтобы избежать зацикливания
   if message.from_user and message.from_user.is_bot:
     return
 
   try:
     parsed_event = extract_dispatch_info(text)
 
-    # Пропускаем обычные переписки, не содержащие диспетчерских данных
     if (
         not parsed_event.get("is_dispatch_related")
         or not parsed_event.get("unit_number")
@@ -111,7 +107,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     logging.info(f"Processing dispatch message: {text}")
 
-    # Подготовка данных для отправки в Google Apps Script
     payload = parsed_event
     payload["raw_text"] = text
     payload["sheet_name"] = WORKSHEET_NAME
