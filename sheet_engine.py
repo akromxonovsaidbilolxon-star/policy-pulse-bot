@@ -9,6 +9,7 @@ SCOPES = [
     "https://www.googleapis.com/auth/drive"
 ]
 
+# Column Index Reference (0-based) matching your spreadsheet layout
 COL_COMPANY = 0
 COL_DRIVER_STATUS = 1
 COL_DRIVER_TYPE = 2
@@ -153,28 +154,28 @@ class FleetSheetManager:
                 loc_entry = location if (i == len(drivers) - 1 and action == "pickup") else ""
 
                 row_data = [
-                    specs["company"],
-                    "Active" if action == "pickup" else "",
-                    "Company driver",
-                    full_name,
-                    eff_date,
-                    "",
-                    "",
-                    truck_status_entry,
-                    specs["plate"],
-                    specs["st"],
-                    unit_target,
-                    specs["make"],
-                    specs["year"],
-                    specs["vin"],
-                    specs["type"],
-                    eff_date,
-                    "",
-                    "",
-                    "",
-                    "",
-                    specs["value"],
-                    loc_entry
+                    specs["company"],                        # Company name
+                    "Active" if action == "pickup" else "",  # Driver Status
+                    "Company driver",                         # Driver type
+                    full_name,                                # Driver Name
+                    eff_date,                                 # Driver Effective Date
+                    "",                                       # Driver Termination Date
+                    "",                                       # Fleet Policy
+                    truck_status_entry,                       # Truck Status
+                    specs["plate"],                           # Plate #
+                    specs["st"],                              # ST
+                    unit_target,                              # Unit
+                    specs["make"],                            # Make
+                    specs["year"],                            # Year
+                    specs["vin"],                             # VIN
+                    specs["type"],                            # Truck Type
+                    eff_date,                                 # Truck Effective date
+                    "",                                       # Policy Effective Date
+                    "",                                       # Expiration Date
+                    "",                                       # Truck Termination date
+                    "",                                       # Fleet Policy
+                    specs["value"],                           # Value
+                    loc_entry                                 # Location
                 ]
                 new_rows.append(row_data)
 
@@ -184,7 +185,7 @@ class FleetSheetManager:
 
         change_summary = "; ".join(status_changes) if status_changes else "No status changes"
 
-        # Record entry in Audit Log
+        # Log action into Audit Log tab
         self.log_audit(
             unit=unit_target,
             company=specs["company"],
