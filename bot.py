@@ -7,39 +7,63 @@ from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTyp
 from google import genai
 from google.genai import types
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# Environment Variables
+# Load Environment Variables
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 APPS_SCRIPT_URL = os.environ.get("APPS_SCRIPT_URL")
+
+# Diagnostic check for Railway logs
+missing_vars = []
+if not TELEGRAM_BOT_TOKEN:
+    missing_vars.append("TELEGRAM_BOT_TOKEN")
+if not GEMINI_API_KEY:
+    missing_vars.append("GEMINI_API_KEY")
+if not APPS_SCRIPT_URL:
+    missing_vars.append("APPS_SCRIPT_URL")
+
+if missing_vars:
+    logger.error(f"FATAL: Missing environment variables: {', '.join(missing_vars)}")
+    raise ValueError(f"Missing environment variables: {', '.join(missing_vars)}")
 
 # Initialize Gemini Client
 ai_client = genai.Client(api_key=GEMINI_API_KEY)
 
 SYSTEM_PROMPT = """
-You are a data extraction assistant for fleet management and driver compliance updates.
-Extract the structured entity details from the message:
-- event_type: (e.g., "TRUCK_SWAP", "NEW_DRIVER", "TERMINATION", "EQUIPMENT_PICKUP", "EQUIPMENT_DROPOFF", "OTHER")
-- driver_name: Full name if mentioned, else null
-- equipment_id: Truck number, trailer number, or VIN if mentioned, else null
-- notes: Any extra key context or summary details
+You are a data extraction bot for trucking fleet management and driver compliance.
+Parse the incoming raw message into structured JSON with these keys:
+- event_type: ("ASSIGNMENT", "EQUIPMENT_SWAP", "NEW_DRIVER", "TERMINATION", or "OTHER")
+- carrier: ("Cargo Prime", "Borderlanders", "Supreme", "Successor", etc. Default to "Cargo Prime" if not specified)
+- driver_name: Driver's full name, or null
+- equipment_id: Unit / Truck number (e.g. "3401", "TR-102"), or null
+- trailer_number: Trailer number if mentioned, or null
+- vin: Last 6 digits or full VIN if mentioned, or null
+- action_type: ("SWAP", "PICKUP", "DROPOFF", or null)
+- notes: Brief summary of the update
 
-Respond strictly in valid JSON matching this schema:
+Output MUST be strictly valid JSON matching this schema:
 {
-  "event_type": string,
-  "driver_name": string or null,
-  "equipment_id": string or null,
-  "notes": string
+  "event_type": "...",
+  "carrier": "...",
+  "driver_name": "...",
+  "equipment_id": "...",
+  "trailer_number": "...",
+  "vin": "...",
+  "action_type": "...",
+  "notes": "..."
 }
 """
 
-def parse_with_gemini(text: str) -> dict:
+def parse_message_with_gemini(raw_text: str) -> dict:
     try:
         response = ai_client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=text,
+            contents=raw_text,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_PROMPT,
                 response_mime_type="application/json",
@@ -48,46 +72,44 @@ def parse_with_gemini(text: str) -> dict:
         )
         return json.loads(response.text)
     except Exception as e:
-        logger.error(f"Gemini parsing failed: {e}")
+        logger.error(f"Error calling Gemini: {e}")
         return {
-            "event_type": "UNKNOWN",
-            "driver_name": None,
-            "equipment_id": None,
-            "notes": "Parsing failed"
+            "event_type": "OTHER",
+            "notes": "Failed to parse automatically"
         }
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    message = update.effective_message
-    if not message or not message.text:
+    msg = update.effective_message
+    if not msg or not msg.text:
         return
 
-    raw_text = message.text
-    logger.info(f"Received message: {raw_text[:50]}...")
+    raw_text = msg.text
+    chat_title = update.effective_chat.title if update.effective_chat else "Direct Message"
+    logger.info(f"Processing message from [{chat_title}]: {raw_text[:60]}...")
 
-    # Step 1: Parse entities with Gemini
-    parsed_data = parse_with_gemini(raw_text)
-    parsed_data["raw_text"] = raw_text
+    # 1. Parse text using Gemini
+    data = parse_message_with_gemini(raw_text)
+    data["raw_text"] = raw_text
+    data["channel_name"] = chat_title
 
-    # Step 2: Push to Google Sheets via Apps Script Webhook
+    # 2. Push to Google Sheets via Apps Script Webhook
     try:
-        res = requests.post(APPS_SCRIPT_URL, json=parsed_data, timeout=10)
+        res = requests.post(APPS_SCRIPT_URL, json=data, timeout=12)
         if res.status_code == 200:
-            logger.info("Successfully synced row to Google Sheets.")
+            logger.info("Successfully synced to Google Sheets!")
         else:
-            logger.error(f"Apps Script error ({res.status_code}): {res.text}")
+            logger.warning(f"Apps Script responded with HTTP {res.status_code}: {res.text}")
     except Exception as e:
-        logger.error(f"Failed to post to Apps Script: {e}")
+        logger.error(f"Failed to post to Google Apps Script: {e}")
 
 def main():
-    if not all([TELEGRAM_BOT_TOKEN, GEMINI_API_KEY, APPS_SCRIPT_URL]):
-        raise ValueError("Missing one or more required environment variables.")
-
+    logger.info("Starting Telegram Bot Application...")
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     
-    # Listen to text messages from direct chats, groups, or channels where the bot is added
+    # Catch all non-command text messages
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     
-    logger.info("Bot is polling...")
+    logger.info("Bot is active and polling for updates...")
     app.run_polling()
 
 if __name__ == "__main__":
