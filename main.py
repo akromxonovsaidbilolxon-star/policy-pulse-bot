@@ -96,7 +96,7 @@ def extract_truck_data(raw_text):
     text_upper = raw_text.upper()
     if "SWAP" in text_upper:
         data["action_type"] = "SWAP"
-        data["driver_status"] = ""  # Left empty for swaps as requested
+        data["driver_status"] = ""
     elif "TERMINAT" in text_upper or "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
         data["action_type"] = "DROPOFF"
         data["driver_status"] = "Inactive"
@@ -104,8 +104,6 @@ def extract_truck_data(raw_text):
         data["action_type"] = "PICKUP"
         data["driver_status"] = "Active"
         
-    # Sanitize Location to fit Google Sheets allowed dropdown list values:
-    # "Yard, Shop, Accident, Rolling, Transferred, Returned, Left, Vacation, Home, Sub unit, Sold"
     text_lower = raw_text.lower()
     if "returned" in text_lower or "return" in text_lower:
         data["location"] = "Returned"
@@ -115,27 +113,21 @@ def extract_truck_data(raw_text):
         data["location"] = "Shop"
     elif "home" in text_lower:
         data["location"] = "Home"
-    elif "sold" in text_lower:
-        data["location"] = "Sold"
     else:
         data["location"] = "Shop" if data["action_type"] in ["SWAP", "DROPOFF"] else "Rolling"
 
-    # Company identification
     company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if company_match:
         data["company"] = company_match.group(1).strip()
         
-    # Date
     date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', raw_text, re.IGNORECASE)
     if date_match:
         data["event_date"] = date_match.group(1).strip()
         
-    # Driver name
     driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if driver_match:
         data["driver_name"] = driver_match.group(1).strip()
 
-    # SWAP / Multi-unit parsing
     if "Pick up unit" in raw_text or data["action_type"] == "SWAP":
         parts = re.split(r'Pick up unit', raw_text, flags=re.IGNORECASE)
         drop_section = parts[0]
@@ -181,7 +173,6 @@ def extract_truck_data(raw_text):
             data["plate"] = plate_match.group(1).strip()
             data["pickup_plate"] = plate_match.group(1).strip()
 
-    # Make, model, year
     make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if make_match:
         make_val = make_match.group(1).strip()
