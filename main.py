@@ -78,7 +78,7 @@ def extract_truck_data(raw_text):
     data = {
         "company": "Pars Transportation",
         "action_type": "PICKUP",
-        "driver_status": "Active",
+        "driver_status": "",
         "driver_name": "",
         "unit_number": "",     # Drop Unit
         "vin": "",             # Drop VIN
@@ -96,12 +96,30 @@ def extract_truck_data(raw_text):
     text_upper = raw_text.upper()
     if "SWAP" in text_upper:
         data["action_type"] = "SWAP"
+        data["driver_status"] = ""  # Left empty for swaps as requested
     elif "TERMINAT" in text_upper or "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
         data["action_type"] = "DROPOFF"
-        data["driver_status"] = "Terminated"
+        data["driver_status"] = "Inactive"
     else:
         data["action_type"] = "PICKUP"
+        data["driver_status"] = "Active"
         
+    # Sanitize Location to fit Google Sheets allowed dropdown list values:
+    # "Yard, Shop, Accident, Rolling, Transferred, Returned, Left, Vacation, Home, Sub unit, Sold"
+    text_lower = raw_text.lower()
+    if "returned" in text_lower or "return" in text_lower:
+        data["location"] = "Returned"
+    elif "yard" in text_lower:
+        data["location"] = "Yard"
+    elif "shop" in text_lower or "repair" in text_lower or "issue" in text_lower or "fulton" in text_lower or "boulevard" in text_lower:
+        data["location"] = "Shop"
+    elif "home" in text_lower:
+        data["location"] = "Home"
+    elif "sold" in text_lower:
+        data["location"] = "Sold"
+    else:
+        data["location"] = "Shop" if data["action_type"] in ["SWAP", "DROPOFF"] else "Rolling"
+
     # Company identification
     company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if company_match:
@@ -116,23 +134,6 @@ def extract_truck_data(raw_text):
     driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if driver_match:
         data["driver_name"] = driver_match.group(1).strip()
-
-    # Location parsing
-    loc_match = re.search(r'Location:\s*([^\n]+)', raw_text, re.IGNORECASE)
-    if loc_match:
-        data["location"] = loc_match.group(1).strip()
-    else:
-        text_lower = raw_text.lower()
-        if "returned" in text_lower or "return" in text_lower:
-            data["location"] = "Returned"
-        elif "yard" in text_lower:
-            data["location"] = "Yard"
-        elif "shop" in text_lower or "repair" in text_lower or "issue" in text_lower:
-            data["location"] = "Shop"
-        elif "home" in text_lower:
-            data["location"] = "Home"
-        else:
-            data["location"] = "Shop" if data["action_type"] in ["SWAP", "DROPOFF"] else "Rolling"
 
     # SWAP / Multi-unit parsing
     if "Pick up unit" in raw_text or data["action_type"] == "SWAP":
