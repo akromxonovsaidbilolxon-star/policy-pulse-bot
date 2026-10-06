@@ -80,16 +80,17 @@ def extract_truck_data(raw_text):
         "action_type": "PICKUP",
         "driver_status": "Active",
         "driver_name": "",
-        "unit_number": "",
-        "pickup_unit": "",
-        "vin": "",
-        "pickup_vin": "",
+        "unit_number": "",     # Drop Unit
+        "vin": "",             # Drop VIN
+        "plate": "",           # Drop Plate
+        "pickup_unit": "",     # Pickup Unit
+        "pickup_vin": "",      # Pickup VIN
+        "pickup_plate": "",    # Pickup Plate
         "make": "",
         "year": "",
-        "plate": "",
         "truck_type": "Nexgen Rental",
         "event_date": datetime.now().strftime("%Y-%m-%d"),
-        "location": "Rolling"
+        "location": "Shop"
     }
     
     text_upper = raw_text.upper()
@@ -101,7 +102,22 @@ def extract_truck_data(raw_text):
     else:
         data["action_type"] = "PICKUP"
         
-    # Extract location (grab full text or fallback)
+    # Company identification
+    company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
+    if company_match:
+        data["company"] = company_match.group(1).strip()
+        
+    # Date
+    date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', raw_text, re.IGNORECASE)
+    if date_match:
+        data["event_date"] = date_match.group(1).strip()
+        
+    # Driver name
+    driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
+    if driver_match:
+        data["driver_name"] = driver_match.group(1).strip()
+
+    # Location parsing
     loc_match = re.search(r'Location:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if loc_match:
         data["location"] = loc_match.group(1).strip()
@@ -116,35 +132,55 @@ def extract_truck_data(raw_text):
         elif "home" in text_lower:
             data["location"] = "Home"
         else:
-            data["location"] = "Rolling"
+            data["location"] = "Shop" if data["action_type"] in ["SWAP", "DROPOFF"] else "Rolling"
 
-    company_match = re.search(r'Company:\s*([^\n]+)', raw_text, re.IGNORECASE)
-    if company_match:
-        comp_val = company_match.group(1).strip()
-        data["company"] = "Successor Inc" if "successor" in comp_val.lower() else comp_val
-        
-    date_match = re.search(r'Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', raw_text, re.IGNORECASE)
-    if date_match:
-        data["event_date"] = date_match.group(1).strip()
-        
-    driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
-    if driver_match:
-        data["driver_name"] = driver_match.group(1).strip()
+    # SWAP / Multi-unit parsing
+    if "Pick up unit" in raw_text or data["action_type"] == "SWAP":
+        parts = re.split(r'Pick up unit', raw_text, flags=re.IGNORECASE)
+        drop_section = parts[0]
+        pickup_section = parts[1] if len(parts) > 1 else ""
 
-    unit_match = re.search(r'(?:Drop off unit|Drop unit|Pick up unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
-    if unit_match:
-        data["pickup_unit"] = unit_match.group(1).strip()
-        data["unit_number"] = unit_match.group(1).strip()
+        drop_unit = re.search(r'(?:Drop unit|Drop off unit|Unit)[:\s#]*([0-9]+)', drop_section, re.IGNORECASE)
+        if drop_unit:
+            data["unit_number"] = drop_unit.group(1).strip()
 
-    vin_match = re.search(r'[Vv]in:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
-    if vin_match:
-        data["pickup_vin"] = vin_match.group(1).strip()
-        data["vin"] = vin_match.group(1).strip()
+        drop_vin = re.search(r'[Vv]in:\s*([A-Z0-9]+)', drop_section, re.IGNORECASE)
+        if drop_vin:
+            data["vin"] = drop_vin.group(1).strip()
 
-    plate_match = re.search(r'Plate:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
-    if plate_match:
-        data["plate"] = plate_match.group(1).strip()
+        drop_plate = re.search(r'Plate:\s*([A-Z0-9]+)', drop_section, re.IGNORECASE)
+        if drop_plate:
+            data["plate"] = drop_plate.group(1).strip()
 
+        if pickup_section:
+            pick_unit = re.search(r'[:\s#]*([0-9]+)', pickup_section)
+            if pick_unit:
+                data["pickup_unit"] = pick_unit.group(1).strip()
+
+            pick_vin = re.search(r'[Vv]in:\s*([A-Z0-9]+)', pickup_section, re.IGNORECASE)
+            if pick_vin:
+                data["pickup_vin"] = pick_vin.group(1).strip()
+
+            pick_plate = re.search(r'Plate:\s*([A-Z0-9]+)', pickup_section, re.IGNORECASE)
+            if pick_plate:
+                data["pickup_plate"] = pick_plate.group(1).strip()
+    else:
+        unit_match = re.search(r'(?:Drop off unit|Drop unit|Pick up unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
+        if unit_match:
+            data["pickup_unit"] = unit_match.group(1).strip()
+            data["unit_number"] = unit_match.group(1).strip()
+
+        vin_match = re.search(r'[Vv]in:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+        if vin_match:
+            data["pickup_vin"] = vin_match.group(1).strip()
+            data["vin"] = vin_match.group(1).strip()
+
+        plate_match = re.search(r'Plate:\s*([A-Z0-9]+)', raw_text, re.IGNORECASE)
+        if plate_match:
+            data["plate"] = plate_match.group(1).strip()
+            data["pickup_plate"] = plate_match.group(1).strip()
+
+    # Make, model, year
     make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if make_match:
         make_val = make_match.group(1).strip()
