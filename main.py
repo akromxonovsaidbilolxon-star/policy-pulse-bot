@@ -88,9 +88,9 @@ def process_accumulated_messages(chat_id):
                         loc = structured_data.get("location", "N/A")
                         change_date = structured_data.get("event_date", datetime.now().strftime("%Y-%m-%d"))
                         
-                        # Updated notification text format with Change Date and new status wording
+                        # Elite command-center style notification format
                         notif_text = (
-                            f"🚨 *Fleet Ledger Update*\n\n"
+                            f"🛡️ *PolicyPulse // Fleet Operations Dispatch*\n\n"
                             f"• *Action:* {action}\n"
                             f"• *Company:* {company}\n"
                             f"• *Driver:* {driver}\n"
@@ -100,7 +100,7 @@ def process_accumulated_messages(chat_id):
                             f"• *Status:* Sheet successfully updated ✅"
                         )
                         
-                        # Persistent inline button markup
+                        # Interactive button markup
                         markup = types.InlineKeyboardMarkup()
                         btn = types.InlineKeyboardButton("Task completed: Update the insurance", callback_data="insurance_updated")
                         markup.add(btn)
@@ -116,8 +116,20 @@ def process_accumulated_messages(chat_id):
 
 @bot.callback_query_handler(func=lambda call: call.data == "insurance_updated")
 def handle_insurance_callback(call):
-    # Acknowledges the button click so it stops loading, keeping the message in the chat
-    bot.answer_callback_query(call.id, text="Insurance task acknowledged!")
+    try:
+        # Append insurance verification status and remove the button so it turns into a clean, simple message
+        updated_text = call.message.text + "\n• *Insurance Status:* Completed & Verified ✅"
+        
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=updated_text,
+            parse_mode="Markdown",
+            reply_markup=None  # Removes the button entirely
+        )
+        bot.answer_callback_query(call.id, text="Insurance marked as completed!")
+    except Exception as e:
+        print(f"Error updating message on callback: {e}")
 
 def extract_truck_data(raw_text):
     data = {
