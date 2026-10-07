@@ -11,6 +11,7 @@ from collections import defaultdict
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GOOGLE_SCRIPT_URL = os.environ.get("GOOGLE_SCRIPT_URL", "").strip()
+ADMIN_TELEGRAM_ID = os.environ.get("ADMIN_TELEGRAM_ID", "").strip()
 
 if not TOKEN:
     print("Error: Missing TELEGRAM_BOT_TOKEN in environment variables.")
@@ -69,6 +70,31 @@ def process_accumulated_messages(chat_id):
         try:
             response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=45)
             print(f"Ledger response: {response.text}")
+            
+            # Send instant Telegram notification if ADMIN_TELEGRAM_ID is configured
+            if ADMIN_TELEGRAM_ID:
+                try:
+                    res_json = response.json()
+                    if res_json.get("status") == "success":
+                        action = structured_data.get("action_type", "UPDATE")
+                        company = structured_data.get("company", "N/A")
+                        driver = structured_data.get("driver_name", "N/A")
+                        unit = structured_data.get("pickup_unit") or structured_data.get("unit_number") or "N/A"
+                        loc = structured_data.get("location", "N/A")
+                        
+                        notif_text = (
+                            f"🚨 *Fleet Ledger Update*\n\n"
+                            f"• *Action:* `{action}`\n"
+                            f"• *Company:* `{company}`\n"
+                            f"• *Driver:* `{driver}`\n"
+                            f"• *Unit:* `{unit}`\n"
+                            f"• *Location:* `{loc}`\n"
+                            f"• *Status:* Successfully Logged ✅"
+                        )
+                        bot.send_message(ADMIN_TELEGRAM_ID, notif_text, parse_mode="Markdown")
+                except Exception as notif_err:
+                    print(f"Failed to send Telegram notification: {notif_err}")
+
         except Exception as e:
             print(f"Error posting to Google Sheets: {e}")
     else:
@@ -80,12 +106,12 @@ def extract_truck_data(raw_text):
         "action_type": "PICKUP",
         "driver_status": "",
         "driver_name": "",
-        "unit_number": "",     # Drop Unit
-        "vin": "",             # Drop VIN
-        "plate": "",           # Drop Plate
-        "pickup_unit": "",     # Pickup Unit
-        "pickup_vin": "",      # Pickup VIN
-        "pickup_plate": "",    # Pickup Plate
+        "unit_number": "",
+        "vin": "",
+        "plate": "",
+        "pickup_unit": "",
+        "pickup_vin": "",
+        "pickup_plate": "",
         "make": "",
         "year": "",
         "truck_type": "Nexgen Rental",
@@ -124,7 +150,7 @@ def extract_truck_data(raw_text):
     if date_match:
         data["event_date"] = date_match.group(1).strip()
         
-    driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
+    driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, raw_text, re.IGNORECASE) if False else re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if driver_match:
         data["driver_name"] = driver_match.group(1).strip()
 
