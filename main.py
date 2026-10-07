@@ -8,6 +8,7 @@ import threading
 import uuid
 from datetime import datetime
 from collections import defaultdict
+from telebot import types
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GOOGLE_SCRIPT_URL = os.environ.get("GOOGLE_SCRIPT_URL", "").strip()
@@ -85,17 +86,26 @@ def process_accumulated_messages(chat_id):
                         driver = structured_data.get("driver_name", "N/A")
                         unit = structured_data.get("pickup_unit") or structured_data.get("unit_number") or "N/A"
                         loc = structured_data.get("location", "N/A")
+                        change_date = structured_data.get("event_date", datetime.now().strftime("%Y-%m-%d"))
                         
+                        # Updated notification text format with Change Date and new status wording
                         notif_text = (
                             f"🚨 *Fleet Ledger Update*\n\n"
-                            f"• *Action:* `{action}`\n"
-                            f"• *Company:* `{company}`\n"
-                            f"• *Driver:* `{driver}`\n"
-                            f"• *Unit:* `{unit}`\n"
-                            f"• *Location:* `{loc}`\n"
-                            f"• *Status:* Successfully Logged ✅"
+                            f"• *Action:* {action}\n"
+                            f"• *Company:* {company}\n"
+                            f"• *Driver:* {driver}\n"
+                            f"• *Unit:* {unit}\n"
+                            f"• *Location:* {loc}\n"
+                            f"• *Change Date:* {change_date}\n"
+                            f"• *Status:* Sheet successfully updated ✅"
                         )
-                        bot.send_message(ADMIN_TELEGRAM_ID, notif_text, parse_mode="Markdown")
+                        
+                        # Persistent inline button markup
+                        markup = types.InlineKeyboardMarkup()
+                        btn = types.InlineKeyboardButton("Task completed: Update the insurance", callback_data="insurance_updated")
+                        markup.add(btn)
+                        
+                        bot.send_message(ADMIN_TELEGRAM_ID, notif_text, parse_mode="Markdown", reply_markup=markup)
                 except Exception as notif_err:
                     print(f"Failed to send Telegram notification: {notif_err}")
 
@@ -103,6 +113,11 @@ def process_accumulated_messages(chat_id):
             print(f"Error posting to Google Sheets: {e}")
     else:
         print("Warning: GOOGLE_SCRIPT_URL is not set.")
+
+@bot.callback_query_handler(func=lambda call: call.data == "insurance_updated")
+def handle_insurance_callback(call):
+    # Acknowledges the button click so it stops loading, keeping the message in the chat
+    bot.answer_callback_query(call.id, text="Insurance task acknowledged!")
 
 def extract_truck_data(raw_text):
     data = {
