@@ -21,6 +21,11 @@ message_buffers = defaultdict(list)
 timers = {}
 buffer_lock = threading.Lock()
 
+@bot.message_handler(commands=['myid', 'start'])
+def send_my_id(message):
+    chat_id = message.chat.id
+    bot.reply_to(message, f"Your Telegram Chat ID is: {chat_id}")
+
 def handle_incoming_content(message_or_post):
     try:
         chat_id = message_or_post.chat.id
@@ -28,7 +33,7 @@ def handle_incoming_content(message_or_post):
         return
         
     text = getattr(message_or_post, 'text', None) or getattr(message_or_post, 'caption', None) or ""
-    if not text:
+    if not text or text.startswith('/'):
         return
     
     with buffer_lock:
@@ -71,7 +76,6 @@ def process_accumulated_messages(chat_id):
             response = requests.post(GOOGLE_SCRIPT_URL, json=structured_data, timeout=45)
             print(f"Ledger response: {response.text}")
             
-            # Send instant Telegram notification if ADMIN_TELEGRAM_ID is configured
             if ADMIN_TELEGRAM_ID:
                 try:
                     res_json = response.json()
@@ -150,7 +154,7 @@ def extract_truck_data(raw_text):
     if date_match:
         data["event_date"] = date_match.group(1).strip()
         
-    driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, raw_text, re.IGNORECASE) if False else re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
+    driver_match = re.search(r'Driver name:\s*([^\n]+)', raw_text, re.IGNORECASE)
     if driver_match:
         data["driver_name"] = driver_match.group(1).strip()
 
