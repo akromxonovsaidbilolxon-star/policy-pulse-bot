@@ -84,7 +84,18 @@ def process_accumulated_messages(chat_id):
                         action = structured_data.get("action_type", "UPDATE")
                         company = structured_data.get("company", "N/A")
                         driver = structured_data.get("driver_name", "N/A")
-                        unit = structured_data.get("pickup_unit") or structured_data.get("unit_number") or "N/A"
+                        
+                        # --- NEW LOGIC: Display both units for SWAPs ---
+                        d_unit = structured_data.get("unit_number")
+                        p_unit = structured_data.get("pickup_unit")
+                        
+                        if action == "SWAP":
+                            unit_display = f"Dropped: {d_unit or 'N/A'} ➔ Picked Up: {p_unit or 'N/A'}"
+                        elif action == "DROPOFF":
+                            unit_display = f"Dropped: {d_unit or p_unit or 'N/A'}"
+                        else:
+                            unit_display = f"Picked Up: {p_unit or d_unit or 'N/A'}"
+                            
                         loc = structured_data.get("location", "N/A")
                         change_date = structured_data.get("event_date", datetime.now().strftime("%Y-%m-%d"))
                         
@@ -94,7 +105,7 @@ def process_accumulated_messages(chat_id):
                             f"• *Action:* {action}\n"
                             f"• *Company:* {company}\n"
                             f"• *Driver:* {driver}\n"
-                            f"• *Unit:* {unit}\n"
+                            f"• *Unit:* {unit_display}\n"
                             f"• *Location:* {loc}\n"
                             f"• *Change Date:* {change_date}\n"
                             f"• *Status:* Sheet successfully updated ✅"
