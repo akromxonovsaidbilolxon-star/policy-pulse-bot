@@ -145,6 +145,8 @@ def extract_truck_data(raw_text):
         "pickup_plate": "",
         "make": "",
         "year": "",
+        "pickup_make": "",
+        "pickup_year": "",
         "truck_type": "Nexgen Rental",
         "event_date": datetime.now().strftime("%Y-%m-%d"),
         "location": "Shop"
@@ -190,6 +192,7 @@ def extract_truck_data(raw_text):
         drop_section = parts[0]
         pickup_section = parts[1] if len(parts) > 1 else ""
 
+        # --- PROCESS DROPPED TRUCK INFO ---
         drop_unit = re.search(r'(?:Drop unit|Drop off unit|Unit)[:\s#]*([0-9]+)', drop_section, re.IGNORECASE)
         if drop_unit:
             data["unit_number"] = drop_unit.group(1).strip()
@@ -201,7 +204,16 @@ def extract_truck_data(raw_text):
         drop_plate = re.search(r'Plate:\s*([A-Z0-9]+)', drop_section, re.IGNORECASE)
         if drop_plate:
             data["plate"] = drop_plate.group(1).strip()
+            
+        drop_make = re.search(r'Make model year:\s*([^\n]+)', drop_section, re.IGNORECASE)
+        if drop_make:
+            make_val = drop_make.group(1).strip()
+            data["make"] = make_val
+            year_match = re.search(r'(20[0-9]{2})', make_val)
+            if year_match:
+                data["year"] = year_match.group(1)
 
+        # --- PROCESS NEW PICKUP TRUCK INFO ---
         if pickup_section:
             pick_unit = re.search(r'[:\s#]*([0-9]+)', pickup_section)
             if pick_unit:
@@ -214,7 +226,16 @@ def extract_truck_data(raw_text):
             pick_plate = re.search(r'Plate:\s*([A-Z0-9]+)', pickup_section, re.IGNORECASE)
             if pick_plate:
                 data["pickup_plate"] = pick_plate.group(1).strip()
+                
+            pick_make = re.search(r'Make model year:\s*([^\n]+)', pickup_section, re.IGNORECASE)
+            if pick_make:
+                pick_make_val = pick_make.group(1).strip()
+                data["pickup_make"] = pick_make_val
+                pick_year_match = re.search(r'(20[0-9]{2})', pick_make_val)
+                if pick_year_match:
+                    data["pickup_year"] = pick_year_match.group(1)
     else:
+        # --- PROCESS SINGLE TRUCK EVENTS (Standard Dropoff / Pickup) ---
         unit_match = re.search(r'(?:Drop off unit|Drop unit|Pick up unit|Unit)[:\s#]*([0-9]+)', raw_text, re.IGNORECASE)
         if unit_match:
             data["pickup_unit"] = unit_match.group(1).strip()
@@ -230,13 +251,15 @@ def extract_truck_data(raw_text):
             data["plate"] = plate_match.group(1).strip()
             data["pickup_plate"] = plate_match.group(1).strip()
 
-    make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
-    if make_match:
-        make_val = make_match.group(1).strip()
-        data["make"] = make_val
-        year_match = re.search(r'(20[0-9]{2})', make_val)
-        if year_match:
-            data["year"] = year_match.group(1)
+        make_match = re.search(r'Make model year:\s*([^\n]+)', raw_text, re.IGNORECASE)
+        if make_match:
+            make_val = make_match.group(1).strip()
+            data["make"] = make_val
+            data["pickup_make"] = make_val
+            year_match = re.search(r'(20[0-9]{2})', make_val)
+            if year_match:
+                data["year"] = year_match.group(1)
+                data["pickup_year"] = year_match.group(1)
 
     return data
 
