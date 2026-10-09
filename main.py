@@ -167,9 +167,10 @@ def extract_truck_data(raw_text):
     if "SWAP" in text_upper:
         data["action_type"] = "SWAP"
         data["driver_status"] = ""
-    elif "TERMINAT" in text_upper or "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper:
+    # Updated to assign "Empty" driver status and capture "DROP"
+    elif "TERMINAT" in text_upper or "DROPOFF" in text_upper or "DROP OFF" in text_upper or "DROPPED" in text_upper or "DROP" in text_upper:
         data["action_type"] = "DROPOFF"
-        data["driver_status"] = "Inactive"
+        data["driver_status"] = "Empty"
     else:
         data["action_type"] = "PICKUP"
         data["driver_status"] = "Active"
