@@ -9,7 +9,6 @@ import uuid
 from datetime import datetime
 from collections import defaultdict
 from telebot import types
-import gspread  # <-- NEW IMPORT
 
 TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GOOGLE_SCRIPT_URL = os.environ.get("GOOGLE_SCRIPT_URL", "").strip()
@@ -17,21 +16,6 @@ ADMIN_TELEGRAM_ID = os.environ.get("ADMIN_TELEGRAM_ID", "").strip()
 
 if not TOKEN:
     print("Error: Missing TELEGRAM_BOT_TOKEN in environment variables.")
-
-# --- NEW: GOOGLE SHEETS SETUP ---
-# Ensure 'credentials.json' is in the same folder as this script on Railway
-try:
-    gc = gspread.service_account(filename='credentials.json')
-    # CHANGE THIS to the exact name of your Google Sheet
-    spreadsheet = gc.open('Your_Spreadsheet_Name') 
-    sheet1 = spreadsheet.worksheet('Sheet1') # Main Tracker
-    sheet2 = spreadsheet.worksheet('Sheet2') # Policy Database
-    GSPREAD_READY = True
-    print("Successfully connected to Google Sheets directly.")
-except Exception as e:
-    print(f"Warning: gspread setup failed. Direct sheet updates disabled: {e}")
-    GSPREAD_READY = False
-# ---------------------------------
 
 bot = telebot.TeleBot(TOKEN)
 message_buffers = defaultdict(list)
@@ -87,58 +71,6 @@ def process_accumulated_messages(chat_id):
     structured_data["transaction_id"] = transaction_id
     structured_data["timestamp"] = timestamp
     structured_data["raw_message"] = combined_text
-
-    # --- NEW GSPREAD LOGIC EXECUTED HERE ---
-    if GSPREAD_READY:
-        action = structured_data.get("action_type")
-        d_vin = structured_data.get("vin", "").upper().strip() # Dropped VIN
-        p_vin = structured_data.get("pickup_vin", "").upper().strip() # Picked up VIN
-        
-        try:
-            sheet1_vins = sheet1.col_values(15) # Sheet1 Column O (VIN)
-            sheet2_vins = sheet2.col_values(3)  # Sheet2 Column C (VIN)
-            
-            # 1. HANDLE DROPOFFS AND OLD TRUCK IN SWAPS
-            if action in ["DROPOFF", "SWAP"] and d_vin:
-                try:
-                    d_row = sheet1_vins.index(d_vin) + 1 # +1 because arrays start at 0, sheets at 1
-                    # Update Truck Status (I/9) to In active. We DO NOT touch AL/PD.
-                    sheet1.update_acell(f'I{d_row}', 'In active')
-                    print(f"Gspread: Marked dropped truck {d_vin} as In active.")
-                except ValueError:
-                    print(f"Gspread: Dropped VIN {d_vin} not found in Sheet1.")
-                    
-            # 2. HANDLE PICKUPS AND NEW TRUCK IN SWAPS
-            if action in ["PICKUP", "SWAP"] and p_vin:
-                try:
-                    p_row1 = sheet1_vins.index(p_vin) + 1
-                    
-                    # Look up statuses in Sheet2
-                    al_status = ""
-                    pd_status = ""
-                    try:
-                        p_row2 = sheet2_vins.index(p_vin) + 1
-                        al_status = sheet2.cell(p_row2, 4).value # Column D (AL Policy)
-                        pd_status = sheet2.cell(p_row2, 5).value # Column E (PD Policy)
-                    except ValueError:
-                        print(f"Gspread: Pickup VIN {p_vin} not found in Sheet2. AL/PD left blank.")
-                        
-                    # Batch Update Sheet1: Status (I/9), AL (H/8), PD (G/7)
-                    updates = [{'range': f'I{p_row1}', 'values': [['Active']]}]
-                    if al_status:
-                        updates.append({'range': f'H{p_row1}', 'values': [[al_status]]})
-                    if pd_status:
-                        updates.append({'range': f'G{p_row1}', 'values': [[pd_status]]})
-                        
-                    sheet1.batch_update(updates)
-                    print(f"Gspread: Marked pickup truck {p_vin} Active with AL:{al_status} PD:{pd_status}")
-                    
-                except ValueError:
-                    print(f"Gspread: Pickup VIN {p_vin} not found in Sheet1.")
-                    
-        except Exception as e:
-            print(f"Gspread execution error: {e}")
-    # ---------------------------------------
 
     if GOOGLE_SCRIPT_URL:
         try:
