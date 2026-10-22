@@ -6,6 +6,8 @@ import time
 import re
 import threading
 import uuid
+import io
+import pandas as pd
 from datetime import datetime
 from collections import defaultdict
 from telebot import types
@@ -22,10 +24,146 @@ message_buffers = defaultdict(list)
 timers = {}
 buffer_lock = threading.Lock()
 
+# Month name mapping for natural language queries
+MONTH_MAP = {
+    "january": 1, "jan": 1, "01": 1,
+    "february": 2, "feb": 2, "02": 2,
+    "march": 3, "mar": 3, "03": 3,
+    "april": 4, "apr": 4, "04": 4,
+    "may": 5, "05": 5,
+    "june": 6, "jun": 6, "06": 6,
+    "july": 7, "jul": 7, "07": 7,
+    "august": 8, "aug": 8, "08": 8,
+    "september": 9, "sep": 9, "sept": 9, "09": 9,
+    "october": 10, "oct": 10, "10": 10,
+    "november": 11, "nov": 11, "11": 11,
+    "december": 12, "dec": 12, "12": 12
+}
+
 @bot.message_handler(commands=['myid', 'start'])
 def send_my_id(message):
     chat_id = message.chat.id
     bot.reply_to(message, f"Your Telegram Chat ID is: {chat_id}")
+
+@bot.message_handler(func=lambda msg: msg.text and ("change report" in msg.text.lower() or "report for" in msg.text.lower()))
+def handle_report_request(message):
+    query = message.text.strip()
+    bot.reply_to(message, "🔍 Pulling audit records and generating Excel report...")
+
+    # Extract target month
+    matched_month = None
+    matched_month_name = ""
+    for name, month_num in MONTH_MAP.items():
+        if re.search(rf"\b{name}\b", query, re.IGNORECASE):
+            matched_month = month_num
+            matched_month_name = name.capitalize()
+            break
+
+    # Extract company name (assumes phrasing like: "give me <Company> change report for ...")
+    company_name = None
+    comp_match = re.search(r"(?:give me\s+)?(.+?)\s+(?:change\s+)?report", query, re.IGNORECASE)
+    if comp_match:
+        company_name = comp_match.group(1).strip()
+
+    if not GOOGLE_SCRIPT_URL:
+        bot.reply_to(message, "⚠️ GOOGLE_SCRIPT_URL is not set.")
+        return
+
+    try:
+        resp = requests.get(f"{GOOGLE_SCRIPT_URL}?action=get_records", timeout=30)
+        records = resp.json()
+
+        report_rows = []
+        for r in records:
+            # Match company (case-insensitive substring)
+            rec_company = str(r.get("company", "") or r.get("Company", "")).strip()
+            if company_name and company_name.lower() not in rec_company.lower():
+                continue
+
+            # Parse and match date
+            date_raw = str(r.get("event_date", "") or r.get("Date", "") or r.get("timestamp", "")).strip()
+            event_dt = None
+            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y-%m-%d %H:%M:%S", "%m/%d/%Y %H:%M:%S"):
+                try:
+                    event_dt = datetime.strptime(date_raw.split()[0], fmt)
+                    break
+                except Exception:
+                    continue
+
+            if matched_month and event_dt and event_dt.month != matched_month:
+                continue
+
+            event_date_str = event_dt.strftime("%Y-%m-%d") if event_dt else date_raw
+            action = str(r.get("action_type", "") or r.get("Action", "")).upper()
+
+            d_unit = r.get("unit_number", "") or r.get("Drop Unit", "")
+            p_unit = r.get("pickup_unit", "") or r.get("Pick Up Unit", "")
+            d_vin = r.get("vin", "") or r.get("Drop VIN", "")
+            p_vin = r.get("pickup_vin", "") or r.get("Pick Up VIN", "")
+
+            # Break out each event into individual Add / Remove operations
+            if action == "SWAP":
+                if d_unit or d_vin:
+                    report_rows.append({
+                        "Date": event_date_str,
+                        "Truck Number": d_unit,
+                        "VIN Number": d_vin,
+                        "What Happened": "Drop"
+                    })
+                if p_unit or p_vin:
+                    report_rows.append({
+                        "Date": event_date_str,
+                        "Truck Number": p_unit,
+                        "VIN Number": p_vin,
+                        "What Happened": "Pick up"
+                    })
+            elif action == "DROPOFF":
+                report_rows.append({
+                    "Date": event_date_str,
+                    "Truck Number": d_unit or p_unit,
+                    "VIN Number": d_vin or p_vin,
+                    "What Happened": "Drop"
+                })
+            else:  # PICKUP
+                report_rows.append({
+                    "Date": event_date_str,
+                    "Truck Number": p_unit or d_unit,
+                    "VIN Number": p_vin or d_vin,
+                    "What Happened": "Pick up"
+                })
+
+        if not report_rows:
+            bot.reply_to(message, f"No matching records found for {company_name or 'the specified company'}"
+                                  f"{f' in {matched_month_name}' if matched_month_name else ''}.")
+            return
+
+        # Build Excel sheet
+        df = pd.DataFrame(report_rows)
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Change Report')
+            
+            # Format column widths
+            worksheet = writer.sheets['Change Report']
+            for col in worksheet.columns:
+                max_len = max(len(str(cell.value or '')) for cell in col)
+                col_letter = col[0].column_letter
+                worksheet.column_dimensions[col_letter].width = max(max_len + 4, 14)
+
+        excel_buffer.seek(0)
+        file_company = (company_name or "Fleet").replace(" ", "_")
+        filename = f"{file_company}_Change_Report_{matched_month_name or 'All'}.xlsx"
+        
+        bot.send_document(
+            message.chat.id,
+            document=types.InputFile(excel_buffer, filename=filename),
+            caption=f"📊 *{company_name or 'Fleet'}* change report ({len(report_rows)} entries)",
+            parse_mode="Markdown"
+        )
+
+    except Exception as err:
+        print(f"Error producing report: {err}")
+        bot.reply_to(message, f"❌ Failed to generate report: {err}")
 
 def handle_incoming_content(message_or_post):
     try:
