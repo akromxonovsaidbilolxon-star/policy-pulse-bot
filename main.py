@@ -24,7 +24,6 @@ message_buffers = defaultdict(list)
 timers = {}
 buffer_lock = threading.Lock()
 
-# Month name mapping for natural language queries
 MONTH_MAP = {
     "january": 1, "jan": 1, "01": 1,
     "february": 2, "feb": 2, "02": 2,
@@ -50,7 +49,6 @@ def handle_report_request(message):
     query = message.text.strip()
     bot.reply_to(message, "🔍 Pulling audit records and generating Excel report...")
 
-    # Extract target month
     matched_month = None
     matched_month_name = ""
     for name, month_num in MONTH_MAP.items():
@@ -59,7 +57,6 @@ def handle_report_request(message):
             matched_month_name = name.capitalize()
             break
 
-    # Extract company name (assumes phrasing like: "give me <Company> change report for ...")
     company_name = None
     comp_match = re.search(r"(?:give me\s+)?(.+?)\s+(?:change\s+)?report", query, re.IGNORECASE)
     if comp_match:
@@ -75,12 +72,10 @@ def handle_report_request(message):
 
         report_rows = []
         for r in records:
-            # Match company (case-insensitive substring)
             rec_company = str(r.get("company", "") or r.get("Company", "")).strip()
             if company_name and company_name.lower() not in rec_company.lower():
                 continue
 
-            # Parse and match date
             date_raw = str(r.get("event_date", "") or r.get("Date", "") or r.get("timestamp", "")).strip()
             event_dt = None
             for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y-%m-%d %H:%M:%S", "%m/%d/%Y %H:%M:%S"):
@@ -101,7 +96,6 @@ def handle_report_request(message):
             d_vin = r.get("vin", "") or r.get("Drop VIN", "")
             p_vin = r.get("pickup_vin", "") or r.get("Pick Up VIN", "")
 
-            # Break out each event into individual Add / Remove operations
             if action == "SWAP":
                 if d_unit or d_vin:
                     report_rows.append({
@@ -133,17 +127,17 @@ def handle_report_request(message):
                 })
 
         if not report_rows:
-            bot.reply_to(message, f"No matching records found for {company_name or 'the specified company'}"
-                                  f"{f' in {matched_month_name}' if matched_month_name else ''}.")
+            bot.reply_to(
+                message, 
+                f"No matching records found for {company_name or 'the specified company'}"
+                f"{f' in {matched_month_name}' if matched_month_name else ''}."
+            )
             return
 
-        # Build Excel sheet
         df = pd.DataFrame(report_rows)
         excel_buffer = io.BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Change Report')
-            
-            # Format column widths
             worksheet = writer.sheets['Change Report']
             for col in worksheet.columns:
                 max_len = max(len(str(cell.value or '')) for cell in col)
