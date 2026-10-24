@@ -146,11 +146,12 @@ def handle_report_request(message):
 
         excel_buffer.seek(0)
         file_company = (company_name or "Fleet").replace(" ", "_")
-        filename = f"{file_company}_Change_Report_{matched_month_name or 'All'}.xlsx"
+        file_name_clean = f"{file_company}_Change_Report_{matched_month_name or 'All'}.xlsx"
+        excel_buffer.name = file_name_clean
         
         bot.send_document(
             message.chat.id,
-            document=types.InputFile(excel_buffer, filename=filename),
+            document=excel_buffer,
             caption=f"📊 *{company_name or 'Fleet'}* change report ({len(report_rows)} entries)",
             parse_mode="Markdown"
         )
