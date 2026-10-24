@@ -39,6 +39,27 @@ MONTH_MAP = {
     "december": 12, "dec": 12, "12": 12
 }
 
+def parse_any_date(date_str):
+    if not date_str or str(date_str).lower() in ["nan", "none", ""]:
+        return None
+    date_str = str(date_str).strip()
+    
+    # 1. Matches "Jul 22 2026" inside long GMT strings
+    m = re.search(r'([A-Za-z]{3}\s+\d{1,2}\s+\d{4})', date_str)
+    if m:
+        try:
+            return datetime.strptime(m.group(1), "%b %d %Y")
+        except Exception:
+            pass
+
+    # 2. Standard ISO / US date formats
+    for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y-%m-%d %H:%M:%S", "%m/%d/%Y %H:%M:%S"):
+        try:
+            return datetime.strptime(date_str.split()[0], fmt)
+        except Exception:
+            continue
+    return None
+
 @bot.message_handler(commands=['myid', 'start'])
 def send_my_id(message):
     chat_id = message.chat.id
@@ -47,7 +68,7 @@ def send_my_id(message):
 @bot.message_handler(func=lambda msg: msg.text and ("change report" in msg.text.lower() or "report for" in msg.text.lower()))
 def handle_report_request(message):
     query = message.text.strip()
-    bot.reply_to(message, "🔍 Pulling audit records and generating Excel report...")
+    bot.reply_to(message, "🔍 Analyzing fleet VIN audit history & generating report...")
 
     matched_month = None
     matched_month_name = ""
@@ -67,64 +88,72 @@ def handle_report_request(message):
         return
 
     try:
-        resp = requests.get(f"{GOOGLE_SCRIPT_URL}?action=get_records", timeout=30)
+        resp = requests.get(f"{GOOGLE_SCRIPT_URL}?action=get_records", timeout=35)
         records = resp.json()
 
-        report_rows = []
+        # Group all valid historical events by VIN
+        vin_history = defaultdict(list)
+        vin_to_unit = {}
+
         for r in records:
-            rec_company = str(r.get("company", "") or r.get("Company", "")).strip()
+            rec_company = str(r.get("company", "") or "").strip()
             if company_name and company_name.lower() not in rec_company.lower():
                 continue
 
-            date_raw = str(r.get("event_date", "") or r.get("Date", "") or r.get("timestamp", "")).strip()
-            event_dt = None
-            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y-%m-%d %H:%M:%S", "%m/%d/%Y %H:%M:%S"):
-                try:
-                    event_dt = datetime.strptime(date_raw.split()[0], fmt)
-                    break
-                except Exception:
-                    continue
+            vin = str(r.get("vin", "") or r.get("pickup_vin", "") or "").strip()
+            unit = str(r.get("unit_number", "") or r.get("pickup_unit", "") or "").strip()
 
-            if matched_month and event_dt and event_dt.month != matched_month:
+            # Ignore empty or placeholder VINs
+            if not vin or vin.lower() in ["nan", "none", "unknown", ""]:
                 continue
 
-            event_date_str = event_dt.strftime("%Y-%m-%d") if event_dt else date_raw
-            action = str(r.get("action_type", "") or r.get("Action", "")).upper()
+            dt = parse_any_date(r.get("event_date") or r.get("Date"))
+            if not dt:
+                continue
 
-            d_unit = r.get("unit_number", "") or r.get("Drop Unit", "")
-            p_unit = r.get("pickup_unit", "") or r.get("Pick Up Unit", "")
-            d_vin = r.get("vin", "") or r.get("Drop VIN", "")
-            p_vin = r.get("pickup_vin", "") or r.get("Pick Up VIN", "")
+            raw_act = str(r.get("action_type", "") or "").upper()
+            action = "Drop" if ("DROP" in raw_act or "TERM" in raw_act) else "Pick up"
 
-            if action == "SWAP":
-                if d_unit or d_vin:
-                    report_rows.append({
-                        "Date": event_date_str,
-                        "Truck Number": d_unit,
-                        "VIN Number": d_vin,
-                        "What Happened": "Drop"
-                    })
-                if p_unit or p_vin:
-                    report_rows.append({
-                        "Date": event_date_str,
-                        "Truck Number": p_unit,
-                        "VIN Number": p_vin,
-                        "What Happened": "Pick up"
-                    })
-            elif action == "DROPOFF":
-                report_rows.append({
-                    "Date": event_date_str,
-                    "Truck Number": d_unit or p_unit,
-                    "VIN Number": d_vin or p_vin,
-                    "What Happened": "Drop"
-                })
-            else:  # PICKUP
-                report_rows.append({
-                    "Date": event_date_str,
-                    "Truck Number": p_unit or d_unit,
-                    "VIN Number": p_vin or d_vin,
-                    "What Happened": "Pick up"
-                })
+            if unit and unit.lower() not in ["nan", "none"]:
+                vin_to_unit[vin] = unit
+
+            vin_history[vin].append({
+                "date": dt,
+                "action": action,
+                "unit": unit
+            })
+
+        report_rows = []
+
+        # Analyze each VIN's lifecycle
+        for vin, events in vin_history.items():
+            # Sort chronologically
+            events.sort(key=lambda x: x["date"])
+
+            # Check if this VIN has any event in the requested month
+            events_in_month = [e for e in events if e["date"].month == matched_month] if matched_month else events
+            if not events_in_month:
+                continue
+
+            # Determine the sequential timeline in that period
+            last_event = events_in_month[-1]
+            last_action = last_event["action"]
+            last_date_str = last_event["date"].strftime("%Y-%m-%d")
+
+            # Sequential Logic:
+            # - If dropped and later picked up -> Still Active
+            # - If picked up and later dropped -> Dropped
+            status_desc = "Active (Picked Up)" if last_action == "Pick up" else "Dropped (Out of Service)"
+            actions_summary = " ➔ ".join([f"{e['action']} ({e['date'].strftime('%m/%d')})" for e in events_in_month])
+            truck_num = vin_to_unit.get(vin, events_in_month[-1]["unit"])
+
+            report_rows.append({
+                "VIN Number": vin,
+                "Truck Number": truck_num,
+                "Last Change Date": last_date_str,
+                "Month Status": status_desc,
+                "Month Action History": actions_summary
+            })
 
         if not report_rows:
             bot.reply_to(
@@ -134,7 +163,10 @@ def handle_report_request(message):
             )
             return
 
+        # Sort output by Last Change Date
         df = pd.DataFrame(report_rows)
+        df.sort_values(by="Last Change Date", ascending=True, inplace=True)
+
         excel_buffer = io.BytesIO()
         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
             df.to_excel(writer, index=False, sheet_name='Change Report')
@@ -142,17 +174,18 @@ def handle_report_request(message):
             for col in worksheet.columns:
                 max_len = max(len(str(cell.value or '')) for cell in col)
                 col_letter = col[0].column_letter
-                worksheet.column_dimensions[col_letter].width = max(max_len + 4, 14)
+                worksheet.column_dimensions[col_letter].width = max(max_len + 4, 16)
 
         excel_buffer.seek(0)
         file_company = (company_name or "Fleet").replace(" ", "_")
-        file_name_clean = f"{file_company}_Change_Report_{matched_month_name or 'All'}.xlsx"
-        excel_buffer.name = file_name_clean
+        excel_buffer.name = f"{file_company}_Status_Report_{matched_month_name or 'All'}.xlsx"
         
         bot.send_document(
             message.chat.id,
             document=excel_buffer,
-            caption=f"📊 *{company_name or 'Fleet'}* change report ({len(report_rows)} entries)",
+            caption=f"📊 *{company_name or 'Fleet'}* Report for *{matched_month_name or 'All'}*\n"
+                    f"• Evaluated unique VINs: `{len(report_rows)}`\n"
+                    f"• Status logic: Drop followed by Pick up = *Active*, Final Drop = *Dropped*.",
             parse_mode="Markdown"
         )
 
